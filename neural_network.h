@@ -16,6 +16,8 @@ static const float InitialWeightMin = -0.05;
 using weightType = int8_t; // int8_t
 static const float weightFactor = 100.f;
 
+
+
 class NeuralNetwork {
     public:
 
@@ -35,6 +37,9 @@ class NeuralNetwork {
 
         float getWeight(weightType val);
         weightType setWeight(float val);
+
+        static const int hiddenWeightsAmt = (InputNodes + 1) * HiddenNodes;
+        static const int outputWeightsAmt = (HiddenNodes + 1) * OutputNodes;
         
     private:
 
