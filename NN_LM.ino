@@ -22,7 +22,7 @@ const uint8_t button_4 = 5;
 //uint8_t num_button = 0; // 0 represents none
 bool button_pressed = false;
 
-int batchSize = 20;
+int batchSize = 200;
 
 // Defaults: 0.3, 0.9
 static NeuralNetwork myNetwork;
@@ -144,46 +144,53 @@ void sendWeights() {
     sendModemMessage(1, data, false);
     byte* response;
     int bytesCount = getModemMessage(response);
-    std::string s( (char*) response, bytesCount );
-    Serial.print("Received ack response: "); Serial.println(s.c_str());
-    ackReceived = s == "hw1";
+    //std::string s( (char*) response, bytesCount );
+    //Serial.print("Received ack response: "); Serial.println(s.c_str());
+    ackReceived = bytesCount == 2;
   }
 
   Serial.println("Request for 1st batch received");
+  int batchesAmt = getBatchesAmt();
 
   weightType* myHiddenWeights = myNetwork.get_HiddenWeights();
-  byte weights[batchSize];
-  for (int i = 0; i < myNetwork.hiddenWeightsAmt; i = i+batchSize) {
+  weightType* myOutputWeights = myNetwork.get_OutputWeights();
+  int16_t batch = 0;
+  while (batch != batchesAmt) {
+    Serial.print("Sending batch "); Serial.println(batch);
+    byte weights[batchSize];
     int j = 0;
-    while(j < batchSize && j+i < myNetwork.hiddenWeightsAmt) {
-      weights[j] = myHiddenWeights[i+j];
+    for (int i = batch * batchSize; i < (batch+1) * batchSize && i < myNetwork.hiddenWeightsAmt + myNetwork.outputWeightsAmt; i++) {
+      if (i < myNetwork.hiddenWeightsAmt) {
+        weights[j] = myHiddenWeights[i];
+      } else {
+        weights[j] = myOutputWeights[i - myNetwork.hiddenWeightsAmt];
+      }
       j++;
     }
     sendModemMessage(j, weights, true);
     Serial.println("Batch sent!");
+
+    // Get new batch number
+    int bytesCount = 0;
+    while(bytesCount < 0) {
+      byte* newBatchNum;
+      int bytesCount = getModemMessage(newBatchNum);
+      if (bytesCount) {
+        std::memcpy(&batch, newBatchNum, sizeof(int16_t));
+        Serial.print("Got new batch num: "); Serial.println(batch);   
+      }
+    }
   }
 
-  
-  /*Serial.print("Sending "); Serial.print((InputNodes + 1) * HiddenNodes); Serial.println(" weights");
-  int8_t* myHiddenWeights = myNetwork.get_HiddenWeights();
-  //Serial1.write('s');
-  //uint16_t size = (InputNodes + 1) * HiddenNodes;
-  //Serial1.write(static_cast<byte*>(static_cast<void*>(&size)), 2);
-  for (int i = 0; i < (InputNodes + 1) * HiddenNodes; ++i) {
-    Serial1.write('s');
-    Serial.write((byte)0);Serial.write((byte)1);
-    Serial1.write(myHiddenWeights[i]);
-  }
+  // Ack end of FL and request ack
+  byte data[1] = {'a'};  
+  sendModemMessage(1, data, true);
 
-  delay(10000);
-  Serial.print("Sending "); Serial.print((HiddenNodes + 1) * OutputNodes); Serial.println(" weights");
-  int8_t* myOutputWeights = myNetwork.get_OutputWeights();
-  Serial1.write('s');
-  uint16_t size = (InputNodes + 1) * HiddenNodes;
-  Serial1.write(static_cast<byte*>(static_cast<void*>(&size)), 2);
-  for (int i = 0; i < (HiddenNodes + 1) * OutputNodes; ++i) {
-    Serial1.write(myOutputWeights[i]);
-  }*/
+  Serial.println("Send weights ended");
+}
+
+int getBatchesAmt() {
+  return ceil((float)(myNetwork.hiddenWeightsAmt + myNetwork.outputWeightsAmt) / (float)batchSize);
 }
 
 void doFL() {
@@ -204,51 +211,38 @@ void doFL() {
   Serial.println("Send command sent");
 
   weightType hw[myNetwork.hiddenWeightsAmt]; 
+  weightType ow[myNetwork.outputWeightsAmt]; 
 
-  int batches = myNetwork.hiddenWeightsAmt / batchSize;
-  for (int i = 0; i < myNetwork.hiddenWeightsAmt; i = i+batchAmt) {
+  int16_t batches = getBatchesAmt();
+  for (int16_t i = 0; i < batches; i++) {
     bool received = false;
     while(!received) {
-      byte batch[3] = {'h', 'w', '1'};
-      sendModemMessage(3, batch, false);
-      Serial.print("Batch "); Serial.print(i/batchAmt + 1); Serial.println(" requested");
+      byte *batch = static_cast<byte*>(static_cast<void*>(&i));
+      sendModemMessage(2, batch, false);
+      Serial.print("Batch "); Serial.print(i); Serial.print("/"); Serial.print(batches); Serial.println(" requested");
       byte* response;
       int bytesCount = getModemMessage(response);
       if (bytesCount > 0) {
         Serial.println("Batch received!");
         received = true;
         for(int k = 0; k < bytesCount; k++) {
-          hw[i+k] = response[k];
+          int pos = i*batchSize+k;
+          if (pos > myNetwork.hiddenWeightsAmt) {
+            hw[pos] = response[k];
+          } else {
+            ow[pos - myNetwork.hiddenWeightsAmt] = response[k];
+          }
         }
       }
     }
   }
-  
-  
 
-  
+  Serial.println("Notifying end of FL");
+  byte *batch = static_cast<byte*>(static_cast<void*>(&batches));
+  sendModemMessage(2, batch, true);
 
-  
- /*
-    Serial1.write('s'); // Send command
-    uint16_t size = 1;
-    Serial1.write(static_cast<byte*>(static_cast<void*>(&size)), 2);
-    Serial1.write('g');  // Send a 'g' to the other devices so they start sending me their data
-    Serial.println("Send command sent");
-  
-    // Wait for ack
-    byte* bytes;
-    int ackCount = getModemMessage(bytes, 10000);
-    */
   Serial.println("FL Done");
-  /*byte* inputWeights;
-  int bytesCount = getModemMessage(inputWeights);
 
-  Serial.println("Getting output weights");
-
-  byte* outputWeights;
-  bytesCount = getModemMessage(outputWeights);*/
-  
   digitalWrite(LED_BUILTIN, LOW);    // OFF
 }
 
