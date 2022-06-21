@@ -4,6 +4,8 @@
 #include <map>
 #include <PDM.h>
 
+static signed short sampleBuffer[2048];
+
 /** Audio buffers, pointers and selectors */
 typedef struct {
   int16_t buffer[EI_CLASSIFIER_RAW_SAMPLE_COUNT];
@@ -25,6 +27,7 @@ bool button_pressed = false;
 
 int batchSize = 200;
 
+// Map containing the addres of the node and the samples it captured until the last FL
 std::map<uint16_t, uint16_t> samples_amt;
 
 static NeuralNetwork myNetwork;
@@ -34,7 +37,7 @@ uint16_t num_epochs = 0;
 void setup() {
   Serial.begin(4800);
   Serial1.begin(4800);
-  
+
   pinMode(button_1, INPUT);
   pinMode(button_2, INPUT);
   pinMode(button_3, INPUT);
@@ -62,33 +65,35 @@ std::vector<uint16_t> getRoutingTable() {
   std::vector<uint16_t> nodes;
   Serial.println("Getting routing table");
   Serial1.write('r'); // Send command
-  while(!Serial1.available()) {
+  while (!Serial1.available()) {
     Serial.println("Waiting for modem response");
     delay(500);
   }
   uint8_t count = Serial1.read();
   Serial.print("Number of nodes: "); Serial.println(count);
-  for(int i = 0; i < count; i++) {
-    while(Serial1.available() < 2) {
+  for (int i = 0; i < count; i++) {
+    while (Serial1.available() < 2) {
       Serial.println("Waiting for modem response");
       delay(500);
     }
     uint16_t node;
     Serial1.readBytes((char*)&node, 2);
     nodes.push_back(node);
-    Serial.println("Node " + String(i+1) + ": " + String(nodes[i]));
+    Serial.println("Node " + String(i + 1) + ": " + String(nodes[i]));
   }
   return nodes;
 }
 
-int sendModemMessage(uint16_t recipient, uint16_t size, byte* bytes, bool expectResponse = false, byte* response = 0) {
+
+byte* defpointer;
+int sendModemMessage(uint16_t recipient, uint16_t size, byte* bytes, bool expectResponse = false, byte*& response = defpointer) {
   bool received = false;
-  while(!received) {
+  while (!received) {
     Serial.println("Attempting to send message");
     Serial1.write('s'); // Send command
     Serial1.write(static_cast<byte*>(static_cast<void*>(&recipient)), 2);
     Serial1.write(static_cast<byte*>(static_cast<void*>(&size)), 2);
-    for(uint16_t i = 0; i < size; i++) {
+    for (uint16_t i = 0; i < size; i++) {
       Serial1.write(bytes[i]);
     }
     if (expectResponse) {
@@ -105,44 +110,47 @@ int sendModemMessage(uint16_t recipient, uint16_t size, byte* bytes, bool expect
 }
 
 void sendNewSamplesCount(uint16_t recipient) {
+  Serial.println("Received samples count request, returning " + String(num_epochs));
   byte data[2];
-  uint16_t count = samples_amt[recipient];
-  std::memcpy(&data, &count, sizeof(uint16_t));
+  std::memcpy(&data, &num_epochs, sizeof(uint16_t));
   int responseLength = sendModemMessage(recipient, sizeof(uint16_t), data);
 }
 
 int getModemMessage(byte*& bytesPtr, uint16_t &recipient) {
   int limit = millis() + 30000;
-  while(millis() < limit) {
-    Serial.println(millis());
-    Serial.println(limit);
+  while (millis() < limit) {
     Serial.println("Waiting for modem message"); delay(1000);
-    if(Serial1.available()) {
+    if (Serial1.available()) {
       char command = Serial1.read();
       Serial.print("Recevied command: "); Serial.println(command);
-      while(Serial1.available() < 2) {Serial.println("Waiting for recipient"); delay(100);}
+      while (Serial1.available() < 2) {
+        Serial.println("Waiting for recipient");
+        delay(100);
+      }
 
       // Read from
       byte addressBytes[2];
       Serial1.readBytes(addressBytes, 2);
       memcpy(&recipient, addressBytes, sizeof(uint16_t));
 
-      while(Serial1.available() < 2) {Serial.println("Waiting for bytes count"); delay(100);}
+      while (Serial1.available() < 2) {
+        Serial.println("Waiting for bytes count");
+        delay(100);
+      }
 
       // Read message bytes count
       byte countBytes[2];
       uint16_t bytesCount;
       Serial1.readBytes(countBytes, 2);
       memcpy(&bytesCount, countBytes, sizeof(uint16_t));
-      
+
       Serial.print("Bytes count: "); Serial.println(bytesCount);
       bytesPtr = (byte*) malloc(bytesCount);
       Serial.println("Receiving bytes");
-      for(int i = 0; i < bytesCount; i++) {
-        while(!Serial1.available()) {}
+      for (int i = 0; i < bytesCount; i++) {
+        while (!Serial1.available()) {}
         bytesPtr[i] = Serial1.read();
-        // Serial.print("Got byte "); Serial.println(i+1);
-        // Serial.print((char) bytesPtr[i]);  
+        Serial.println("Got byte " + String(i + 1) + " (int): " + String((int)bytesPtr[i]));
       }
       Serial.print("Modem received "); Serial.print(bytesCount); Serial.println(" bytes");
       return bytesCount;
@@ -160,11 +168,9 @@ void sendWeights(uint16_t recipient, uint16_t batchNum) {
   weightType* myHiddenWeights = myNetwork.get_HiddenWeights();
   weightType* myOutputWeights = myNetwork.get_OutputWeights();
 
-  samples_amt[recipient] = 0;
-
   byte weights[batchSize];
   int j = 0;
-  for (int i = batchNum * batchSize; i < (batchNum+1) * batchSize && i < myNetwork.hiddenWeightsAmt + myNetwork.outputWeightsAmt; i++) {
+  for (int i = batchNum * batchSize; i < (batchNum + 1) * batchSize && i < myNetwork.hiddenWeightsAmt + myNetwork.outputWeightsAmt; i++) {
     if (i < myNetwork.hiddenWeightsAmt) {
       weights[j] = myHiddenWeights[i];
     } else {
@@ -177,6 +183,7 @@ void sendWeights(uint16_t recipient, uint16_t batchNum) {
 }
 
 int getBatchesAmt() {
+  Serial.println(String(myNetwork.hiddenWeightsAmt + myNetwork.outputWeightsAmt) + " Total samples");
   return ceil((float)(myNetwork.hiddenWeightsAmt + myNetwork.outputWeightsAmt) / (float)batchSize);
 }
 
@@ -185,34 +192,49 @@ void doFL() {
   digitalWrite(LEDB, LOW);
   Serial.println("Starting FL");
 
- 
   std::vector<uint16_t> nodes = getRoutingTable();
   if (!nodes.size()) {
-      Serial.println("Empty routing table");
-      return;
+    Serial.println("Empty routing table");
+    digitalWrite(LEDB, HIGH);
+    return;
   }
 
   int max_i = 0;
-  for(int i = 0; i < nodes.size(); i++) {
+  uint16_t max_epochs_since_last_fl = 0;
+  uint16_t max_epochs = 0;
+  for (int i = 0; i < nodes.size(); i++) {
     byte data[1] = {'n'};
     byte* response;
     int responseLength = sendModemMessage(nodes[i], 1, data, true, response);
     uint16_t amount;
-    std::memcpy(&amount, &response, sizeof(uint16_t));
-    Serial.println("Device " + String(nodes[i]) + " captured " + String(amount) + " samples");
-    if (amount >= max_i) max_i = i;
+    std::memcpy(&amount, response, sizeof(uint16_t));
+    uint16_t amount_since_last_fl = amount - samples_amt[nodes[i]];
+    Serial.println("Device " + String(nodes[i]) + " captured " + String(amount) + " samples, " + amount_since_last_fl + " since last FL");
+    if (amount_since_last_fl >= max_epochs_since_last_fl) {
+      max_i = i;
+      max_epochs_since_last_fl = amount_since_last_fl;
+      max_epochs = amount;
+    }
   }
 
+  if (max_epochs_since_last_fl == 0) {
+    Serial.println("There are no new samples on any device");
+    digitalWrite(LEDB, HIGH);
+    return;
+  }
+
+  samples_amt[nodes[max_i]] = max_epochs;
+
   uint16_t node = nodes[max_i];
-  
-  weightType hw[myNetwork.hiddenWeightsAmt]; 
-  weightType ow[myNetwork.outputWeightsAmt]; 
+
+  weightType hw[myNetwork.hiddenWeightsAmt];
+  weightType ow[myNetwork.outputWeightsAmt];
 
   uint16_t batches = getBatchesAmt();
   for (uint16_t i = 0; i < batches; i++) {
     Serial.print("Batch "); Serial.print(i); Serial.print("/"); Serial.print(batches); Serial.println(" requested");
 
-     // Send a 'g' to the other devices so they start sending me their data
+    // Send a 'g' to the other devices so they start sending me their data
     byte data[3] = {'g', 0, 0};
     std::memcpy(&data[1], &i, sizeof(uint16_t));
     byte* response;
@@ -220,8 +242,8 @@ void doFL() {
 
     Serial.println("Batch received!");
 
-    for(int k = 0; k < responseLength; k++) {
-      int pos = i*batchSize+k;
+    for (int k = 0; k < responseLength; k++) {
+      int pos = i * batchSize + k;
       if (pos > myNetwork.hiddenWeightsAmt) {
         hw[pos] = response[k];
       } else {
@@ -229,6 +251,19 @@ void doFL() {
       }
     }
   }
+
+  // Update local model (weighted average)
+  float localWeightFactor = num_epochs / (num_epochs + max_epochs);
+  float externalWeightFactor = max_epochs / (num_epochs + max_epochs);;
+  weightType* myHiddenWeights = myNetwork.get_HiddenWeights();
+  for (int i = 0; i < myNetwork.hiddenWeightsAmt; i++) {
+    myHiddenWeights[i] = myHiddenWeights[i] * localWeightFactor + hw[i] * externalWeightFactor;
+  }
+  weightType* myOutputWeights = myNetwork.get_OutputWeights();
+  for (int i = 0; i < myNetwork.outputWeightsAmt; i++) {
+    myOutputWeights[i] = myOutputWeights[i] * localWeightFactor + ow[i] * externalWeightFactor;
+  }
+
 
   Serial.println("FL Done");
   digitalWrite(LED_BUILTIN, LOW);    // OFF
@@ -302,29 +337,20 @@ void train(int nb, bool only_forward) {
   myTarget[nb - 1] = 1.f; // button 1 -> {1,0,0};  button 2 -> {0,1,0};  button 3 -> {0,0,1}
 
   // FORWARD
+  unsigned long start = micros();
   float forward_error = myNetwork.forward(features_matrix.buffer, myTarget);
+  Serial.println("Millis: " + String(micros()-start));
 
   float backward_error = 0;
   if (!only_forward) {
     // BACKWARD
     backward_error = myNetwork.backward(features_matrix.buffer, myTarget);
-    ++num_epochs;
-
-    for (auto [node, amt] : samples_amt) {
-      samples_amt[node]++;
-    }
+    num_epochs++;
   }
 
   float error = forward_error;
-  if (!only_forward) {
-    // error = backward_error;
-  }
 
   float* myOutput = myNetwork.get_output();
-
-  //uint8_t num_button_output = 0;
-  //float max_output = 0.f;
-  // Serial.print("Inference result: ");
 
   Serial.println("LOG_END");
 
@@ -371,15 +397,15 @@ static void pdm_data_ready_inference_callback(void) {
   int bytesRead = PDM.read((char *)&sampleBuffer[0], bytesAvailable);
 
   if (inference.buf_ready == 0) {
-      for(int i = 0; i < bytesRead>>1; i++) {
-          inference.buffer[inference.buf_count++] = sampleBuffer[i];
+    for (int i = 0; i < bytesRead >> 1; i++) {
+      inference.buffer[inference.buf_count++] = sampleBuffer[i];
 
-          if(inference.buf_count >= inference.n_samples) {
-              inference.buf_count = 0;
-              inference.buf_ready = 1;
-              break;
-          }
+      if (inference.buf_count >= inference.n_samples) {
+        inference.buf_count = 0;
+        inference.buf_ready = 1;
+        break;
       }
+    }
   }
 }
 
@@ -399,9 +425,9 @@ static bool microphone_setup(uint32_t n_samples) {
   // - one channel (mono mode)
   // - a 16 kHz sample rate
   if (!PDM.begin(1, EI_CLASSIFIER_FREQUENCY)) {
-      ei_printf("Failed to start PDM!");
-      PDM.end();
-      return false;
+    ei_printf("Failed to start PDM!");
+    PDM.end();
+    return false;
   }
 
   return true;
@@ -426,7 +452,7 @@ void loop() {
   digitalWrite(LEDG, HIGH);           // OFF
   digitalWrite(LEDB, HIGH);           // OFF
   digitalWrite(LED_BUILTIN, HIGH);    // OFF
- 
+
   int read = Serial.read();
   if (read == '>') {          // s -> FEDERATED LEARNING
     doFL();
@@ -435,16 +461,18 @@ void loop() {
   } else if (read == 'r') {
     getRoutingTable();
   } else if (read == 'g') {
-    while(!Serial.available()) {delay(100);}
+    while (!Serial.available()) {
+      delay(100);
+    }
     char num_button = Serial.read();
     doRecord(num_button - (int)'0', false);
   }
-
+return;
   if (Serial1.available()) { // Mesagge from LoRaMesher
     byte* bytes;
     uint16_t recipient;
     int bytesCount = getModemMessage(bytes, recipient);
-    
+
     Serial.print("Received "); Serial.print(bytesCount); Serial.println(" bytes from modem");
     if (bytesCount == 3 && (char) bytes[0] == 'g') {
       uint16_t batchNum;

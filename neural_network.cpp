@@ -9,11 +9,11 @@ void NeuralNetwork::initialize(float LearningRate, float Momentum, int DropoutRa
     this->Momentum = Momentum;
     this->DropoutRate = DropoutRate;
 
-    for (int i = 0; i < (InputNodes+1) * HiddenNodes; ++i) {
+    for (int i = 0; i < hiddenWeightsAmt; ++i) {
       HiddenWeights[i] = setWeight(random(InitialWeightMin*100, InitialWeightMax*100)/100.f); // Random generates ints
     }
 
-    for (int i = 0; i < (HiddenNodes+1) * OutputNodes; ++i) {
+    for (int i = 0; i < outputWeightsAmt; ++i) {
       OutputWeights[i] = setWeight(random(InitialWeightMin*100, InitialWeightMax*100)/100.f);
     }
 }

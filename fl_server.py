@@ -12,21 +12,23 @@ import os
 import random
 from queue import Queue
 
-seed = 4321
+seed = 4323
 random.seed(seed)
 np.random.seed(seed)
 
-samples_per_device = 80 # Amount of samples of each word to send to each device
-batch_size = 10 # Must be even, hsa to be split into 2 types of samples
-experiment = 'iid' # 'iid', 'no-iid', 'train-test', None
+samples_per_device = 120 # Amount of samples of each word to send to each device
+batch_size = 120 # Must be even, hsa to be split into 2 types of samples
+experiment = 'train-test' # 'iid', 'no-iid', 'train-test', None
 use_threads = True
-test_samples_amount = 40
+test_samples_amount = 60
 
-weights_datatype = "int8" # float32
-weights_unpack = "c"
-weights_bytes = 1
+# Options: int8, c, 1 / float32 f, 4 / int16, h, 2
+weights_datatype = "float32"
+weights_unpack = "f"
+weights_bytes = 4
 
-size_hidden_nodes = 15
+size_hidden_nodes = 25
+
 size_hidden_layer = (650+1)*size_hidden_nodes
 size_output_layer = (size_hidden_nodes+1)*3
 # hidden_layer = np.zeros(size_hidden_layer).astype('float32')
@@ -514,7 +516,7 @@ if experiment != None:
         #sendTestAllDevices(3)
 
         fl_ini_time = time.time()
-        startFL()
+        #startFL()
         print(f'FL time: {time.time() - fl_ini_time} seconds)')
 
     #print(f"Training error: {sum(errors_queue.queue)/len(errors_queue.queue)}")
