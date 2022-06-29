@@ -8,7 +8,7 @@
 
 static const int PatternCount = 3;
 static const int InputNodes = 650;
-static const int HiddenNodes = 25;
+static const int HiddenNodes = 5;
 static const int OutputNodes = 3;
 static const float InitialWeightMax = 0.05;
 static const float InitialWeightMin = -0.05;
@@ -16,7 +16,8 @@ static const float InitialWeightMin = -0.05;
 using weightType = int8_t; // int8_t / int16_t, float
 static const float weightFactor = 100.f;
 
-
+static const int hiddenWeightsAmt = (InputNodes + 1) * HiddenNodes;
+static const int outputWeightsAmt = (HiddenNodes + 1) * OutputNodes;
 
 class NeuralNetwork {
     public:
@@ -38,8 +39,7 @@ class NeuralNetwork {
         float getWeight(weightType val);
         weightType setWeight(float val);
 
-        static const int hiddenWeightsAmt = (InputNodes + 1) * HiddenNodes;
-        static const int outputWeightsAmt = (HiddenNodes + 1) * OutputNodes;
+        
         
     private:
 
