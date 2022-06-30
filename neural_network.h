@@ -8,7 +8,7 @@
 
 static const int PatternCount = 3;
 static const int InputNodes = 650;
-static const int HiddenNodes = 5;
+static const int HiddenNodes = 25;
 static const int OutputNodes = 3;
 static const float InitialWeightMax = 0.05;
 static const float InitialWeightMin = -0.05;

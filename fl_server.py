@@ -18,8 +18,8 @@ seed = 4321
 random.seed(seed)
 np.random.seed(seed)
 
-samples_per_device = 30 # Amount of samples of each word to send to each device
-batch_size = 10 # Must be even, hsa to be split into 2 types of samples
+samples_per_device = 120 # Amount of samples of each word to send to each device
+batch_size = 30 # Must be even, hsa to be split into 2 types of samples
 experiment = 'train-test' # 'iid', 'no-iid', 'train-test', None
 use_threads = True
 test_samples_amount = 60
@@ -29,7 +29,7 @@ weights_datatype = "int8"
 weights_unpack = "c"
 weights_bytes = 1
 
-size_hidden_nodes = 5
+size_hidden_nodes = 25
 
 momentum = 0.9      # 0 - 1
 learningRate= 0.6   # 0 - 1
@@ -49,20 +49,6 @@ repaint_graph = True
 
 random.shuffle(montserrat_files)
 random.shuffle(pedraforca_files)
-
-# mountains = []
-# for index in range(0, len(montserrat_files), 5):
-#     mountains.append(montserrat_files[index])
-#     mountains.append(montserrat_files[index+1])
-#     mountains.append(montserrat_files[index+2])
-#     mountains.append(montserrat_files[index+3])
-#     mountains.append(montserrat_files[index+4])
-
-#     mountains.append(pedraforca_files[index])
-#     mountains.append(pedraforca_files[index+1])
-#     mountains.append(pedraforca_files[index+2])
-#     mountains.append(pedraforca_files[index+3])
-#     mountains.append(pedraforca_files[index+4])
 
 mountains = list(sum(zip(montserrat_files, pedraforca_files), ()))
 
@@ -147,13 +133,11 @@ def sendSample(device, samplePath, num_button, deviceIndex, only_forward = False
         
         device.write(struct.pack('B', 1 if only_forward else 0))
         conf = device.readline().decode()
-        if (debug): print(f"Only forward confirmation: {conf}") # Button confirmation
+        if (debug): print(f"[{device.port}] Only forward confirmation: {conf}") # Button confirmation
 
         for i, value in enumerate(data['payload']['values']):
             device.write(struct.pack('h', value))
-            
-        #while True:
-        #    print(device.readline())
+
         conf = device.readline().decode()
         print(f"[{device.port}] Sample received confirmation:", conf)
 
@@ -164,16 +148,8 @@ def sendSample(device, samplePath, num_button, deviceIndex, only_forward = False
             if input == b'LOG_END\r\n':
                 break
 
-
-        # while True:
-        #     print(f"[{device.port}]", device.readline().decode())
-
-        # print(f"Fordward millis received: ", device.readline().decode())
-        # print(f"Backward millis received: ", device.readline().decode())
         device.readline().decode() # Accept 'graph' command
         error, num_button_predicted = read_graph(device, deviceIndex)
-        #if (error > 0.28):
-        #    print(f"[{device.port}] Sample {samplePath} generated an error of {error}")
         print(f'[{device.port}] Sample sent in: {(time.time()*1000)-ini_time} milliseconds)')
     return error, num_button == num_button_predicted
 
@@ -286,7 +262,6 @@ def plot_graph():
         if (experiment == 'train-test'):
             plt.axvline(x=samples_per_device, color='blue')
 
-        # if (experiment == 'iid'):
         batches = int(samples_per_device/batch_size)
         for batch in range(batches):
             plt.axvline(x=batch*samples_per_device, color='orange')
@@ -302,7 +277,6 @@ def listenDevice(device, deviceIndex):
             print("Paused...")
             time.sleep(0.1)
 
-        #device.timeout = None
         msg = device.readline().decode()
         if (len(msg) > 0):
             print(f'({device.port}):', msg, end="")
@@ -337,7 +311,7 @@ if experiment != None:
     batches = int(samples_per_device/batch_size)
     for batch in range(batches):
         if (debug): print(f"Sending batch {batch}")
-        # batch_ini_time = time.time()
+        batch_ini_time = time.time()
         for deviceIndex, device in enumerate(devices):
             if experiment == 'iid' or experiment == 'train-test':
                 method = sendSamplesIID            
@@ -353,34 +327,33 @@ if experiment != None:
                 method(device, deviceIndex, batch_size, batch, errors_queue, successes_queue)
         for thread in threads: thread.join() # Wait for all the threads to end
 
-        # print(f'Batch time: {time.time() - batch_ini_time} seconds)')
-        
+        print(f'Batch time: {time.time() - batch_ini_time} seconds)')
+
+        def read_until_fl_end():
+            while True: 
+                for device_index, device in enumerate(devices):
+                    while device.in_waiting:
+                        line = device.readline()
+                        print(f"[{device.port}]", line, line == b'[M7] FL Done\r\n')
+                        if line == b'[M7] FL Done\r\n':
+                            return
+
         if batch < batches - 1:
             for device_index, device in enumerate(devices): print(f"{device_index}: {device.port}")
             # fl_index = input("FL device index:")
             fl_index = 0
             
+            fl_times = len(devices)-1
             # FL with all devices
-            # for device_index, device in enumerate(devices):
-            #     if (device_index == fl_index): continue
-            #     print("Starting FL")
-            #     device.write(b'>')
-            #     while True: 
-            #         line = device.readline()
-            #         print(f"[{device.port}]", line)
-                
-            #         if line == b'[M7] FL Done\r\n':
-            #             break
-
-        #sendTestAllDevices(3)
-
-
-    #print(f"Training error: {sum(errors_queue.queue)/len(errors_queue.queue)}")
+            for i in range(fl_times):
+                print(f"Starting FL number {i+1}")
+                devices[fl_index].write(b'>')
+                read_until_fl_end()
 
     print(f"Training successes: {sum(successes_queue.queue)/len(successes_queue.queue)}")
 
     train_time = time.time()-train_ini_time
-    # print(f'Trained in ({train_time} seconds)')
+    print(f'Trained in ({train_time} seconds)')
 
     if experiment == 'train-test':
         sendTestAllDevices(2)
