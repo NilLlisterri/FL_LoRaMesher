@@ -72,9 +72,9 @@ int getModemMessage(byte*& bytesPtr, uint16_t &recipient) {
       bytesPtr = (byte*) malloc(bytesCount);
       RPC.println("Receiving bytes");
       for (int i = 0; i < bytesCount; i++) {
-        while (!Serial1.available()) {}
+        while (!Serial1.available()) { RPC.println("[M4] Waiting for byte " + String(i+1)); delay(100); }
         bytesPtr[i] = Serial1.read();
-        // RPC.println("Got byte " + String(i + 1) + " (int): " + String((int)bytesPtr[i]));
+        RPC.println("[M4] Got byte " + String(i + 1) + " (int): " + String((int)bytesPtr[i]));
       }
       RPC.print("[M4] Modem received " + String(bytesCount) + " bytes");
       return bytesCount;

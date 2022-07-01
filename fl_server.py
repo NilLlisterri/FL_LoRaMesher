@@ -153,8 +153,11 @@ def sendSample(device, samplePath, num_button, deviceIndex, only_forward = False
         print(f'[{device.port}] Sample sent in: {(time.time()*1000)-ini_time} milliseconds)')
     return error, num_button == num_button_predicted
 
-def sendTestSamples(device, deviceIndex, errors_queue, successes_queue, classes = 2):
+def sendTestSamples(device, deviceIndex, classes = 2):
     global test_mountains, test_3_classes
+
+    errors_queue = Queue()
+    successes_queue = Queue()
 
     start = deviceIndex*test_samples_amount
     end = (deviceIndex*test_samples_amount) + test_samples_amount
@@ -180,26 +183,25 @@ def sendTestSamples(device, deviceIndex, errors_queue, successes_queue, classes 
         error, success = sendSample(device, 'datasets/test/'+filename, num_button, deviceIndex, True)
         errors_queue.put(error)
         successes_queue.put(success)
+    
+    test_accuracy = sum(successes_queue.queue)/len(successes_queue.queue)
+    # print(f"Testing loss mean: {sum(errors_queue.queue)/len(errors_queue.queue)}")
+    print(f"Testing accuracy: {test_accuracy}")
 
 def sendTestAllDevices(classes = 2):
     global devices
-    errors_queue = Queue()
-    successes_queue = Queue()
     for deviceIndex, device in enumerate(devices):
         if use_threads:
-            thread = threading.Thread(target=sendTestSamples, args=(device, deviceIndex, errors_queue, successes_queue, classes))
+            thread = threading.Thread(target=sendTestSamples, args=(device, deviceIndex, classes))
             thread.daemon = True
             thread.start()
             threads.append(thread)
         else:
-            sendTestSamples(device, deviceIndex, errors_queue, successes_queue, classes)
+            sendTestSamples(device, deviceIndex, classes)
     for thread in threads: 
         thread.join() # Wait for all the threads to end
 
-    test_accuracy = sum(successes_queue.queue)/len(successes_queue.queue)
-    # print(f"Testing loss mean: {sum(errors_queue.queue)/len(errors_queue.queue)}")
-    print(f"Testing accuracy: {test_accuracy}")
-    print(f"{test_accuracy}, ", end = '')
+    
 
 def read_graph(device, deviceIndex):
     global repaint_graph
@@ -253,18 +255,23 @@ def plot_graph():
         plt.legend()
         plt.xlim(left=0)
         plt.ylim(bottom=0, top=0.7)
-        plt.ylabel('Loss') # or Error
-        plt.xlabel('Epoch')
+        plt.ylabel('') # or Error
+        plt.xlabel('')
         # plt.axes().set_ylim([0, 0.6])
         # plt.xlim(bottom=0)
         # plt.autoscale()
 
-        if (experiment == 'train-test'):
-            plt.axvline(x=samples_per_device, color='blue')
+        # if (experiment == 'train-test'):
+        #     plt.axvline(x=samples_per_device, color='blue')
+        
+        plt.axvline(x=30, color='orange')
+        plt.axvline(x=60, color='orange')
+        plt.axvline(x=90, color='blue')
 
-        batches = int(samples_per_device/batch_size)
-        for batch in range(batches):
-            plt.axvline(x=batch*samples_per_device, color='orange')
+        # batches = int(samples_per_device/batch_size)
+        # for batch in range(batches):
+        #     pos = batch*samples_per_device
+        #     plt.axvline(x=pos, color='orange')
 
         repaint_graph = False
 
@@ -334,21 +341,21 @@ if experiment != None:
                 for device_index, device in enumerate(devices):
                     while device.in_waiting:
                         line = device.readline()
-                        print(f"[{device.port}]", line, line == b'[M7] FL Done\r\n')
-                        if line == b'[M7] FL Done\r\n':
+                        print(f"[{device.port}]", line, b'FL Done' in line)
+                        if b'FL Done' in line:
                             return
 
-        if batch < batches - 1:
-            for device_index, device in enumerate(devices): print(f"{device_index}: {device.port}")
-            # fl_index = input("FL device index:")
-            fl_index = 0
-            
-            fl_times = len(devices)-1
-            # FL with all devices
-            for i in range(fl_times):
-                print(f"Starting FL number {i+1}")
-                devices[fl_index].write(b'>')
-                read_until_fl_end()
+        #if batch < batches - 1:
+        # for device_index, device in enumerate(devices): print(f"{device_index}: {device.port}")
+        # fl_index = input("FL device index:")
+        fl_index = 0
+        
+        fl_times = len(devices)-1
+        # FL with all devices
+        for i in range(fl_times):
+            print(f"Starting FL number {i+1}")
+            devices[fl_index].write(b'>')
+            read_until_fl_end()
 
     print(f"Training successes: {sum(successes_queue.queue)/len(successes_queue.queue)}")
 
@@ -367,7 +374,7 @@ if experiment != None:
 #    thread.daemon = True
 #    thread.start()
 
-
+plt.figure(figsize=(8, 4))
 plt.ion()
 # plt.title(f"Loss vs Epoch")
 plt.show()

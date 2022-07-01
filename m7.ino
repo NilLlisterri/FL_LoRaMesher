@@ -227,7 +227,7 @@ void doFL() {
   num_epochs += max_epochs_since_last_fl;
 
   delay(1000);
-  Serial.println("[M7] FL Done");
+  Serial.println("[M7] FL Done FL Done FL Done FL DoneFL Done FL Done FL Done FL Done FL Done FL Done");
   digitalWrite(LEDB, HIGH);
 }
 
