@@ -31,7 +31,8 @@ std::vector<weightType> getWeightsValues(uint16_t batchNum) {
 void proxy_serial_m4() {
   while(true) {
     while (RPC.available()) {
-      Serial.write(RPC.read());
+      //Serial.write(RPC.read());
+      RPC.read();
     }
     rtos::ThisThread::sleep_for(50);
   }
@@ -82,10 +83,21 @@ void loop_m7() {
       trainWithSerialSample();
     } else if (read == 'r') {
       std::vector<uint16_t> nodes = RPC.call("getRoutingTable").as<std::vector<uint16_t>>();
+      Serial.println("Nodes: " + String(nodes.size()));
+      for(int i = 0; i < nodes.size(); i++) {
+        Serial.println(nodes[i]);
+      }
     } else if (read == 'g') {
       /*while (!RPC.available()) {}
       char num_button = RPC.read();
       record(num_button - (int)'0', false);*/
+    } else if (read == 'z') {
+      weightType* myHiddenWeights = myNetwork.get_HiddenWeights();
+      weightType* myOutputWeights = myNetwork.get_OutputWeights();
+      for (int i = 0; i < hiddenWeightsAmt; i++) {Serial.write(myHiddenWeights[i]);}
+      for (int i = 0; i < outputWeightsAmt; i++) {Serial.write(myOutputWeights[i]);}
+    } else if (read == 'x') {
+      Serial.println(num_epochs);
     }
   }
   
@@ -206,24 +218,39 @@ void doFL() {
   
   weightType* myHiddenWeights = myNetwork.get_HiddenWeights();
   weightType* myOutputWeights = myNetwork.get_OutputWeights();
-  int batches = floor((float)(hiddenWeightsAmt + outputWeightsAmt) / (float)batchSize);
+  
+
+  // -------------------
+  Serial.println("READY");
+  std::vector<weightType> weights;
+  for(int i = 0; i < hiddenWeightsAmt + outputWeightsAmt; i++) {
+    // Serial.println("[M7] Reading FL byte " + String(i));
+    while(!Serial.available()) {}
+    weights.push_back((weightType) Serial.read());
+    Serial.println("[M7] Weight " + String(i) + " received");
+    int weightPos = i;
+  // -------------------
+  
+  /*int batches = floor((float)(hiddenWeightsAmt + outputWeightsAmt) / (float)batchSize);
   for (uint16_t batchNum = 0; batchNum < batches; batchNum++) {
     Serial.println("[M7] Requesting weights for batch " + String(batchNum) + " / " + String(batches));
     std::vector<weightType> weights = RPC.call("getNodeWeights", node, batchNum).as<std::vector<weightType>>();
     Serial.println("[M7] Got " + String(weights.size()) + " weights for batch " + String(batchNum));
     for(int i = 0; i < weights.size(); i++) {
-      int weightPos = (batchNum * batchSize) + i;
+      int weightPos = (batchNum * batchSize) + i;*/
       if (weightPos < hiddenWeightsAmt) {
-        Serial.println("[M7] Received weight " + String(weightPos) + ": " + String(weights[i]) + ", Local weight: " + String(myHiddenWeights[weightPos]) + ", Result: " + String(myHiddenWeights[weightPos] * localWeightFactor + weights[i] * externalWeightFactor));
+        // Serial.println("[M7] Received weight " + String(weightPos) + ": " + String(weights[i]) + ", Local weight: " + String(myHiddenWeights[weightPos]) + ", Result: " + String(myHiddenWeights[weightPos] * localWeightFactor + weights[i] * externalWeightFactor));
         myHiddenWeights[weightPos] = myHiddenWeights[weightPos] * localWeightFactor + weights[i] * externalWeightFactor;
       } else {
         weightPos = weightPos - hiddenWeightsAmt;
-        Serial.println("[M7] Received weight " + String(weightPos) + ": " + String(weights[i]) + ", Local weight: " + String(myOutputWeights[weightPos]) + ", Result: " + String(myOutputWeights[weightPos] * localWeightFactor + weights[i] * externalWeightFactor));
+        // Serial.println("[M7] Received weight " + String(weightPos) + ": " + String(weights[i]) + ", Local weight: " + String(myOutputWeights[weightPos]) + ", Result: " + String(myOutputWeights[weightPos] * localWeightFactor + weights[i] * externalWeightFactor));
         myOutputWeights[weightPos] = myOutputWeights[weightPos] * localWeightFactor + weights[i] * externalWeightFactor;
       }
     }
-  }
+   //}
 
+  //}
+  
   num_epochs += max_epochs_since_last_fl;
 
   delay(1000);
