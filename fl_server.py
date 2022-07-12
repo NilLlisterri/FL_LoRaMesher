@@ -20,8 +20,8 @@ seed = 4321
 random.seed(seed)
 np.random.seed(seed)
 
-samples_per_device = 20 # Amount of samples of each word to send to each device
-batch_size = 10 # Must be even, hsa to be split into 2 types of samples
+samples_per_device = 120 # Amount of samples of each word to send to each device
+batch_size = 60 # Must be even, hsa to be split into 2 types of samples
 experiment = 'train-test' # 'iid', 'no-iid', 'train-test', None
 use_threads = True
 test_samples_amount = 40
@@ -31,7 +31,7 @@ weights_datatype = "int8"
 weights_unpack = "c"
 weights_bytes = 1
 
-size_hidden_nodes = 70
+size_hidden_nodes = 15
 
 momentum = 0.9      # 0 - 1
 learningRate= 0.6   # 0 - 1
@@ -40,9 +40,6 @@ pauseListen = False # So there are no threads reading the serial input at the sa
 
 montserrat_files = [file for file in os.listdir("datasets/mountains") if file.startswith("montserrat")]
 pedraforca_files = [file for file in os.listdir("datasets/mountains") if file.startswith("pedraforca")]
-vermell_files = [file for file in os.listdir("datasets/colors") if file.startswith("vermell")]
-verd_files = [file for file in os.listdir("datasets/colors") if file.startswith("verd")]
-blau_files = [file for file in os.listdir("datasets/colors") if file.startswith("blau")]
 test_montserrat_files = [file for file in os.listdir("datasets/test/") if file.startswith("montserrat")]
 test_pedraforca_files = [file for file in os.listdir("datasets/test") if file.startswith("pedraforca")]
 
@@ -51,7 +48,6 @@ repaint_graph = True
 
 random.shuffle(montserrat_files)
 random.shuffle(pedraforca_files)
-random.shuffle(vermell_files)
 
 mountains = list(sum(zip(montserrat_files, pedraforca_files), ()))
 test_mountains = list(sum(zip(test_montserrat_files, test_pedraforca_files), ()))
@@ -89,7 +85,7 @@ def sendSamplesIID(device, deviceIndex, batch_size, batch_index, errors_queue, s
         errors_queue.put(error)
     
 def sendSamplesNonIID(device, deviceIndex, batch_size, batch_index, errors_queue, successes_queue):
-    global montserrat_files, pedraforca_files, vermell_files, verd_files, blau_files
+    global montserrat_files, pedraforca_files
 
     start = (batch_index * batch_size)
     end = (batch_index * batch_size) + batch_size
@@ -102,10 +98,6 @@ def sendSamplesNonIID(device, deviceIndex, batch_size, batch_index, errors_queue
         files = pedraforca_files[start:end]
         num_button = 2
         dir = 'mountains'
-    elif  (deviceIndex == 2):
-        files = vermell_files[start:end]
-        num_button = 3
-        dir = 'colors'
     else:
         exit("Exceeded device index")
 
@@ -168,8 +160,6 @@ def sendTestSamples(device, deviceIndex):
             num_button = 1
         elif (filename.startswith("pedraforca")):
             num_button = 2
-        elif (filename.startswith("vermell")):
-            num_button = 3
         else:
             exit("Unknown button for sample")
         # print(f"[{device.port}] Sending sample {filename} ({i}/{len(files)}): Button {num_button}")
@@ -178,9 +168,9 @@ def sendTestSamples(device, deviceIndex):
         errors_queue.put(error)
         successes_queue.put(success)
     
-    test_accuracy = sum(successes_queue.queue)/len(successes_queue.queue)
+    print(f"[{device.port}] Testing loss total: {sum(errors_queue.queue)}")
     print(f"[{device.port}] Testing loss mean: {sum(errors_queue.queue)/len(errors_queue.queue)}")
-    print(f"[{device.port}] Testing accuracy: {test_accuracy}")
+    print(f"[{device.port}] Testing accuracy: {sum(successes_queue.queue)/len(successes_queue.queue)}")
 
 def sendTestAllDevices():
     global devices
@@ -303,13 +293,16 @@ def getDevices():
 
 getDevices()
 
-
 if experiment != None:
     # Train the device
     threads = []
     train_ini_time = time.time()
-    errors_queue = Queue() # MSE errors
-    successes_queue = Queue() # Amount of right inferences
+    errors_queue_map = {}
+    successes_queue_map = {}
+    for deviceIndex, device in enumerate(devices):
+        errors_queue_map[deviceIndex] = Queue() # MSE errors
+        successes_queue_map[deviceIndex] = Queue() # Amount of right inferences
+
     batches = int(samples_per_device/batch_size)
     for batch in range(batches):
         if (debug): print(f"Sending batch {batch}")
@@ -320,13 +313,12 @@ if experiment != None:
             elif experiment == 'no-iid':
                 method = sendSamplesNonIID
 
-            if use_threads:
-                thread = threading.Thread(target=method, args=(device, deviceIndex, batch_size, batch, errors_queue, successes_queue))
-                thread.daemon = True
-                thread.start()
-                threads.append(thread)
-            else:
-                method(device, deviceIndex, batch_size, batch, errors_queue, successes_queue)
+            thread = threading.Thread(target=method, args=(device, deviceIndex, batch_size, batch, errors_queue_map[deviceIndex], successes_queue_map[deviceIndex]))
+            thread.daemon = True
+            thread.start()
+            threads.append(thread)
+            
+
         for thread in threads: thread.join() # Wait for all the threads to end
 
         print(f'Batch time: {time.time() - batch_ini_time} seconds)')
@@ -381,7 +373,10 @@ if experiment != None:
 
             print(f"Fl done confirmation: {devices[fl_index].readline()}")
 
-    print(f"Training successes: {sum(successes_queue.queue)/len(successes_queue.queue)}")
+    for deviceIndex, device in enumerate(devices):
+        print(f"[{device.port}] Training loss total: {sum(errors_queue_map[deviceIndex].queue)}")
+        print(f"[{device.port}] Training loss mean: {sum(errors_queue_map[deviceIndex].queue)/len(errors_queue_map[deviceIndex].queue)}")
+        print(f"[{device.port}] Training accuracy: {sum(successes_queue_map[deviceIndex].queue)/len(successes_queue_map[deviceIndex].queue)}")
 
     train_time = time.time()-train_ini_time
     print(f'Trained in ({train_time} seconds)')

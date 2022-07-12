@@ -6,16 +6,15 @@
  * Network Configuration - customized per network 
  ******************************************************************/
 
-static const int PatternCount = 3;
 static const int InputNodes = 650;
-static const int HiddenNodes = 70;
+static const int HiddenNodes = 15;
 static const int OutputNodes = 3;
 static const float InitialWeightMax = 0.05;
 static const float InitialWeightMin = -0.05;
 
 using weightType = int8_t; // int8_t / int16_t, float
 static const float weightFactor = 100.f;
-
+ 
 static const int hiddenWeightsAmt = (InputNodes + 1) * HiddenNodes;
 static const int outputWeightsAmt = (HiddenNodes + 1) * OutputNodes;
 
