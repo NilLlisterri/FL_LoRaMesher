@@ -222,34 +222,37 @@ void doFL() {
 
   // -------------------
   Serial.println("READY");
+  
   std::vector<weightType> weights;
-  for(int i = 0; i < hiddenWeightsAmt + outputWeightsAmt; i++) {
-    // Serial.println("[M7] Reading FL byte " + String(i));
+  
+  /*for(int i = 0; i < hiddenWeightsAmt + outputWeightsAmt; i++) {
     while(!Serial.available()) {}
     weights.push_back((weightType) Serial.read());
     Serial.println("[M7] Weight " + String(i) + " received");
     int weightPos = i;
-  // -------------------
-  
-  /*int batches = floor((float)(hiddenWeightsAmt + outputWeightsAmt) / (float)batchSize);
+    if (weightPos < hiddenWeightsAmt) {
+      // Serial.println("[M7] Received weight " + String(weightPos) + ": " + String(weights[i]) + ", Local weight: " + String(myHiddenWeights[weightPos]) + ", Result: " + String(myHiddenWeights[weightPos] * localWeightFactor + weights[i] * externalWeightFactor));
+      myHiddenWeights[weightPos] = myHiddenWeights[weightPos] * localWeightFactor + weights[i] * externalWeightFactor;
+    } else {
+      weightPos = weightPos - hiddenWeightsAmt;
+      // Serial.println("[M7] Received weight " + String(weightPos) + ": " + String(weights[i]) + ", Local weight: " + String(myOutputWeights[weightPos]) + ", Result: " + String(myOutputWeights[weightPos] * localWeightFactor + weights[i] * externalWeightFactor));
+      myOutputWeights[weightPos] = myOutputWeights[weightPos] * localWeightFactor + weights[i] * externalWeightFactor;
+    }
+  }*/
+
+  int batches = floor((float)(hiddenWeightsAmt + outputWeightsAmt) / (float)batchSize);
   for (uint16_t batchNum = 0; batchNum < batches; batchNum++) {
-    Serial.println("[M7] Requesting weights for batch " + String(batchNum) + " / " + String(batches));
     std::vector<weightType> weights = RPC.call("getNodeWeights", node, batchNum).as<std::vector<weightType>>();
-    Serial.println("[M7] Got " + String(weights.size()) + " weights for batch " + String(batchNum));
     for(int i = 0; i < weights.size(); i++) {
-      int weightPos = (batchNum * batchSize) + i;*/
+      int weightPos = (batchNum * batchSize) + i;
       if (weightPos < hiddenWeightsAmt) {
-        // Serial.println("[M7] Received weight " + String(weightPos) + ": " + String(weights[i]) + ", Local weight: " + String(myHiddenWeights[weightPos]) + ", Result: " + String(myHiddenWeights[weightPos] * localWeightFactor + weights[i] * externalWeightFactor));
         myHiddenWeights[weightPos] = myHiddenWeights[weightPos] * localWeightFactor + weights[i] * externalWeightFactor;
       } else {
         weightPos = weightPos - hiddenWeightsAmt;
-        // Serial.println("[M7] Received weight " + String(weightPos) + ": " + String(weights[i]) + ", Local weight: " + String(myOutputWeights[weightPos]) + ", Result: " + String(myOutputWeights[weightPos] * localWeightFactor + weights[i] * externalWeightFactor));
         myOutputWeights[weightPos] = myOutputWeights[weightPos] * localWeightFactor + weights[i] * externalWeightFactor;
       }
     }
-   //}
-
-  //}
+  }
   
   num_epochs += max_epochs_since_last_fl;
 
