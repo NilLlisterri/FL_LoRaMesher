@@ -82,6 +82,7 @@ void loop_m7() {
     } else if (read == 't') {   // Train with a sample
       trainWithSerialSample();
     } else if (read == 'r') {
+      // Serial.println("[M7] Requesting routing table to M4");
       std::vector<uint16_t> nodes = RPC.call("getRoutingTable").as<std::vector<uint16_t>>();
       Serial.println("Nodes: " + String(nodes.size()));
       for(int i = 0; i < nodes.size(); i++) {
@@ -242,6 +243,7 @@ void doFL() {
 
   int batches = floor((float)(hiddenWeightsAmt + outputWeightsAmt) / (float)batchSize);
   for (uint16_t batchNum = 0; batchNum < batches; batchNum++) {
+    // Serial.println("[M7] Requesting batch " + String(batchNum));
     std::vector<weightType> weights = RPC.call("getNodeWeights", node, batchNum).as<std::vector<weightType>>();
     for(int i = 0; i < weights.size(); i++) {
       int weightPos = (batchNum * batchSize) + i;
