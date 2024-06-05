@@ -1,3 +1,4 @@
+#include "config.h"
 #include "Arduino.h"
 #include "RPC.h"
 
@@ -6,11 +7,9 @@
 #define EIDSP_QUANTIZE_FILTERBANK   0
 #include <training_kws_inference.h>
 
-#include "neural_network.h"
-
 #include <map>
 
-int batchSize = 200;
+uint batchSize = 200;
 
 
 // This variable will hold the recorded audio.
@@ -18,7 +17,7 @@ int batchSize = 200;
 struct sharedMemory {
   // int var; // Required when a struct contains a flexible array member
   int16_t audio_input_buffer[16000];
-  // weightType weights[hiddenWeightsAmt+outputWeightsAmt];
+  // float weights[hiddenWeightsAmt+outputWeightsAmt];
 };
 /* Datasheet: https://www.st.com/resource/en/reference_manual/dm00176879-stm32h745-755-and-stm32h747-757-advanced-arm-based-32-bit-mcus-stmicroelectronics.pdf
    In this region (SRAM3) we can use 32767 bytes (32kB)
@@ -29,12 +28,12 @@ struct sharedMemory {
 */
 volatile struct sharedMemory * const shared_ptr = (struct sharedMemory *)0x30040000;
 
-int getBatchSize(int batchNum) {
-  if ((batchNum+1) * batchSize > hiddenWeightsAmt + outputWeightsAmt) { // Last batch is not full
-    return hiddenWeightsAmt + outputWeightsAmt - (batchNum * batchSize);
-  }
-  return batchSize;
-}
+// int getBatchSize(int batchNum) {
+//   if ((batchNum+1) * batchSize > network->getHiddenWeightsAmt() + network->getOutputWeightsAmt()) { // Last batch is not full
+//     return network->getHiddenWeightsAmt() + network->getOutputWeightsAmt() - (batchNum * batchSize);
+//   }
+//   return batchSize;
+// }
 
 
 
@@ -43,28 +42,29 @@ int getBatchSize(int batchNum) {
 #ifdef CORE_CM7
 
 #include <mbed.h>
-#include "neural_network.h"
+#include "NN.h"
 #include <map>
 #include <vector>
 
-static NeuralNetwork myNetwork;
+// static NeuralNetwork network;
+NeuralNetwork<NN_HIDDEN_NEURONS>* network = new NeuralNetwork<NN_HIDDEN_NEURONS>();
 
 uint16_t num_epochs = 0;
 
 // Map containing the addres of the node and the samples it captured until the last FL
 std::map<uint16_t, uint16_t> samples_amt;
 
-std::vector<weightType> getWeightsValues(uint16_t batchNum) {
-  weightType* myHiddenWeights = myNetwork.get_HiddenWeights();
-  weightType* myOutputWeights = myNetwork.get_OutputWeights();
+std::vector<float> getWeightsValues(uint16_t batchNum) {
+  float* myHiddenWeights = network->getHiddenWeights();
+  float* myOutputWeights = network->getOutputWeights();
 
-  std::vector<weightType> weights;
-  for(int i = batchNum * batchSize; i < (batchNum+1)*batchSize; i++) {
-    if (i > hiddenWeightsAmt+outputWeightsAmt) break;
-    if (i < hiddenWeightsAmt) {
+  std::vector<float> weights;
+  for(uint i = batchNum * batchSize; i < (batchNum+1)*batchSize; i++) {
+    if (i > network->getHiddenWeightsAmt()+network->getOutputWeightsAmt()) break;
+    if (i < network->getHiddenWeightsAmt()) {
       weights.push_back(myHiddenWeights[i]);
     } else {
-      weights.push_back(myOutputWeights[i-hiddenWeightsAmt]);
+      weights.push_back(myOutputWeights[i-network->getHiddenWeightsAmt()]);
     }
   }
   Serial.println("[M7] Sending batch " + String(batchNum) + ". Weights: " + String(weights.size()));
@@ -78,7 +78,7 @@ void proxy_serial_m4() {
       //Serial.write(RPC.read());
       RPC.read();
     }
-    rtos::ThisThread::sleep_for(50);
+    rtos::ThisThread::sleep_for(std::chrono::milliseconds(50));
   }
 }
 
@@ -89,7 +89,7 @@ static int get_input_data(size_t offset, size_t length, float *out_ptr) {
 }
 
 void train(int nb, bool only_forward) {
-  Serial.println("LOG_START");
+  // Serial.println("LOG_START");
 
   signal_t signal;
   signal.total_length = EI_CLASSIFIER_RAW_SAMPLE_COUNT;
@@ -107,27 +107,27 @@ void train(int nb, bool only_forward) {
 
   // FORWARD
   unsigned long start = micros();
-  float forward_error = myNetwork.forward(features_matrix.buffer, myTarget);
-  Serial.println("Millis: " + String(micros()-start));
+  float forward_error = network->forward(features_matrix.buffer, myTarget);
+  // Serial.println("Millis: " + String(micros()-start));
 
   float backward_error = 0;
   if (!only_forward) {
     // BACKWARD
-    backward_error = myNetwork.backward(features_matrix.buffer, myTarget);
+    backward_error = network->backward(features_matrix.buffer, myTarget);
     num_epochs++;
   }
 
   float error = forward_error;
 
-  float* myOutput = myNetwork.get_output();
+  float* myOutput = network->get_output();
 
-  Serial.println("LOG_END");
+  // Serial.println("LOG_END");
 
   // Info to plot & graph!
   Serial.println("graph");
 
   // Print outputs
-  for (size_t i = 0; i < 3; i++) {
+  for (size_t i = 0; i < network->OutputNodes; i++) {
     ei_printf_float(myOutput[i]);
     Serial.print(" ");
   }
@@ -151,8 +151,8 @@ uint16_t getNewSamplesCount() {
 
 rtos::Thread thread;
 void setup_m7() {
-  Serial.begin(4800);
-  myNetwork.initialize(0.6, 0.9, 0);
+  Serial.begin(SERIAL_BR);
+  network->initialize(0.6, 0.9);
   RPC.bind("train", train);
   RPC.bind("getNewSamplesCount", getNewSamplesCount);
   RPC.bind("getWeightsValues", getWeightsValues);
@@ -227,25 +227,25 @@ void doFL() {
   Serial.println("[M7] Local num epochs: " + String(num_epochs) + ". External: " + String(max_epochs_since_last_fl));
   Serial.println("[M7] Local weight factor: " + String(localWeightFactor) + ". External: " + String(externalWeightFactor));
   
-  weightType* myHiddenWeights = myNetwork.get_HiddenWeights();
-  weightType* myOutputWeights = myNetwork.get_OutputWeights();
+  float* myHiddenWeights = network->getHiddenWeights();
+  float* myOutputWeights = network->getOutputWeights();
   
 
   // -------------------
   Serial.println("READY");
   
-  std::vector<weightType> weights;
+  std::vector<float> weights;
 
-  int batches = floor((float)(hiddenWeightsAmt + outputWeightsAmt) / (float)batchSize);
+  int batches = floor((float)(network->getHiddenWeightsAmt() + network->getOutputWeightsAmt()) / (float)batchSize);
   for (uint16_t batchNum = 0; batchNum < batches; batchNum++) {
     // Serial.println("[M7] Requesting batch " + String(batchNum));
-    std::vector<weightType> weights = RPC.call("getNodeWeights", node, batchNum).as<std::vector<weightType>>();
-    for(int i = 0; i < weights.size(); i++) {
-      int weightPos = (batchNum * batchSize) + i;
-      if (weightPos < hiddenWeightsAmt) {
+    std::vector<float> weights = RPC.call("getNodeWeights", node, batchNum).as<std::vector<float>>();
+    for(uint i = 0; i < weights.size(); i++) {
+      uint weightPos = (batchNum * batchSize) + i;
+      if (weightPos < network->getHiddenWeightsAmt()) {
         myHiddenWeights[weightPos] = myHiddenWeights[weightPos] * localWeightFactor + weights[i] * externalWeightFactor;
       } else {
-        weightPos = weightPos - hiddenWeightsAmt;
+        weightPos = weightPos - network->getHiddenWeightsAmt();
         myOutputWeights[weightPos] = myOutputWeights[weightPos] * localWeightFactor + weights[i] * externalWeightFactor;
       }
     }
@@ -269,7 +269,7 @@ void loop_m7() {
       // Serial.println("[M7] Requesting routing table to M4");
       std::vector<uint16_t> nodes = RPC.call("getRoutingTable").as<std::vector<uint16_t>>();
       Serial.println("Nodes: " + String(nodes.size()));
-      for(int i = 0; i < nodes.size(); i++) {
+      for(uint i = 0; i < nodes.size(); i++) {
         Serial.println(nodes[i]);
       }
     } else if (read == 'g') {
@@ -277,10 +277,10 @@ void loop_m7() {
       char num_button = RPC.read();
       record(num_button - (int)'0', false);*/
     } else if (read == 'z') {
-      weightType* myHiddenWeights = myNetwork.get_HiddenWeights();
-      weightType* myOutputWeights = myNetwork.get_OutputWeights();
-      for (int i = 0; i < hiddenWeightsAmt; i++) {Serial.write(myHiddenWeights[i]);}
-      for (int i = 0; i < outputWeightsAmt; i++) {Serial.write(myOutputWeights[i]);}
+      float* myHiddenWeights = network->getHiddenWeights();
+      float* myOutputWeights = network->getOutputWeights();
+      for (uint i = 0; i < network->getHiddenWeightsAmt(); i++) {Serial.write(myHiddenWeights[i]);}
+      for (uint i = 0; i < network->getOutputWeightsAmt(); i++) {Serial.write(myOutputWeights[i]);}
     } else if (read == 'x') {
       Serial.println(num_epochs);
     }
@@ -309,18 +309,7 @@ void ei_printf(const char *format, ...) {
 
 #ifdef CORE_CM4
 
-// #include <PDM.h>
-
-static signed short sampleBuffer[2048]; // PDM sample buffer
-
-/** Structure to manage audio capture */
-typedef struct {
-  uint8_t buf_ready;
-  uint32_t buf_count;
-  uint32_t n_samples;
-} recording_t;
-
-static recording_t recording = {0, 0, EI_CLASSIFIER_RAW_SAMPLE_COUNT};
+// static signed short sampleBuffer[2048]; // PDM sample buffer
 
 volatile bool lock_modem = false;
 
@@ -350,7 +339,7 @@ std::vector<uint16_t> getRoutingTable() {
 }
 
 int getModemMessage(byte*& bytesPtr, uint16_t &recipient) {
-  int limit = millis() + 30000;
+  uint limit = millis() + 30000;
   while (millis() < limit) {
     RPC.println("[M4] Waiting for modem message"); delay(1000);
     if (Serial1.available()) {
@@ -422,7 +411,7 @@ std::map<uint16_t, uint16_t> getNodesEpochs() {
   std::map<uint16_t, uint16_t> res;
   std::vector<uint16_t> nodes = getRoutingTable();
   lock_modem = true;
-  for (int i = 0; i < nodes.size(); i++) {
+  for (uint i = 0; i < nodes.size(); i++) {
     byte data[1] = {'n'};
     byte* response;
     RPC.println("Sending message requesting epochs");
@@ -435,7 +424,7 @@ std::map<uint16_t, uint16_t> getNodesEpochs() {
   return res;
 }
 
-std::vector<weightType> getNodeWeights(uint16_t node, int batchNum) {
+std::vector<float> getNodeWeights(uint16_t node, int batchNum) {
   lock_modem = true;
   RPC.print("[M4] Batch "); RPC.print(batchNum); RPC.println(" requested");
 
@@ -446,10 +435,10 @@ std::vector<weightType> getNodeWeights(uint16_t node, int batchNum) {
   int responseLength = sendModemMessage(node, 3, data, true, response);
 
   RPC.println("[M4] Batch " + String(batchNum) + " received, responseLength: "+ String(responseLength));
-  std::vector<weightType> weights;
+  std::vector<float> weights;
   for (int k = 0; k < responseLength; k++) {
     weights.push_back(response[k]);
-    // TODO: In this new version only byte weighttype is supported
+    // TODO: In this new version only byte float is supported
   }
   lock_modem = false;
   return weights;
@@ -466,18 +455,18 @@ void sendNewSamplesCount(uint16_t recipient) {
 
 void sendWeights(uint16_t recipient, uint16_t batchNum) {
   RPC.println("[M4] Received weights request for batch : " + String(batchNum));
-  std::vector<weightType> weights = RPC.call("getWeightsValues", batchNum).as<std::vector<weightType>>();
-  RPC.println("[M4] Recevied " + String(weights.size()) + " weights from getWeightsValues, batch size is: " + String(getBatchSize(batchNum)));
+  std::vector<float> weights = RPC.call("getWeightsValues", batchNum).as<std::vector<float>>();
+  RPC.println("[M4] Recevied " + String(weights.size()) + " weights from getWeightsValues, batch size is: " + String(weights.size()));
   byte weightsArr[batchSize];
-  for(int i = 0; i < weights.size(); i++) {
+  for(uint i = 0; i < weights.size(); i++) {
     weightsArr[i] = (byte) weights[i];
   }
-  sendModemMessage(recipient, getBatchSize(batchNum), weightsArr);
+  sendModemMessage(recipient, weights.size(), weightsArr);
   RPC.println("[M4] Batch sent!");
 }
 
 void setup_m4() {
-  Serial1.begin(4800);
+  Serial1.begin(SERIAL_BR);
   
   RPC.bind("getRoutingTable", getRoutingTable);
   RPC.bind("getNodesEpochs", getNodesEpochs);

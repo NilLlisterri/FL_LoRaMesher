@@ -1,3 +1,4 @@
 plots
 outputs/*
 .pio
+server/__pycache__

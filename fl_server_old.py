@@ -83,29 +83,7 @@ def sendSamplesIID(device, deviceIndex, batch_size, batch_index, errors_queue, s
         error, success = sendSample(device, 'datasets/mountains/'+filename, num_button, deviceIndex)
         successes_queue.put(success)
         errors_queue.put(error)
-    
-def sendSamplesNonIID(device, deviceIndex, batch_size, batch_index, errors_queue, successes_queue):
-    global montserrat_files, pedraforca_files
 
-    start = (batch_index * batch_size)
-    end = (batch_index * batch_size) + batch_size
-
-    if (deviceIndex == 0):
-        files = montserrat_files[start:end]
-        num_button = 1
-        dir = 'mountains'
-    elif  (deviceIndex == 1):
-        files = pedraforca_files[start:end]
-        num_button = 2
-        dir = 'mountains'
-    else:
-        exit("Exceeded device index")
-
-    for i, filename in enumerate(files):
-        print(f"[{device.port}] Sending sample {filename} ({i}/{len(files)}): Button {num_button}")
-        error, success = sendSample(device, f"datasets/{dir}/{filename}", num_button, deviceIndex)
-        successes_queue.put(success)
-        errors_queue.put(error)
 
 def sendSample(device, samplePath, num_button, deviceIndex, only_forward = False):
     with open(samplePath) as f:
@@ -308,12 +286,8 @@ if experiment != None:
         if (debug): print(f"Sending batch {batch}")
         batch_ini_time = time.time()
         for deviceIndex, device in enumerate(devices):
-            if experiment == 'iid' or experiment == 'train-test':
-                method = sendSamplesIID            
-            elif experiment == 'no-iid':
-                method = sendSamplesNonIID
 
-            thread = threading.Thread(target=method, args=(device, deviceIndex, batch_size, batch, errors_queue_map[deviceIndex], successes_queue_map[deviceIndex]))
+            thread = threading.Thread(target=sendSamplesIID, args=(device, deviceIndex, batch_size, batch, errors_queue_map[deviceIndex], successes_queue_map[deviceIndex]))
             thread.daemon = True
             thread.start()
             threads.append(thread)
