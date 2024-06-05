@@ -28,14 +28,6 @@ struct sharedMemory {
 */
 volatile struct sharedMemory * const shared_ptr = (struct sharedMemory *)0x30040000;
 
-// int getBatchSize(int batchNum) {
-//   if ((batchNum+1) * batchSize > network->getHiddenWeightsAmt() + network->getOutputWeightsAmt()) { // Last batch is not full
-//     return network->getHiddenWeightsAmt() + network->getOutputWeightsAmt() - (batchNum * batchSize);
-//   }
-//   return batchSize;
-// }
-
-
 
 
 
@@ -46,7 +38,6 @@ volatile struct sharedMemory * const shared_ptr = (struct sharedMemory *)0x30040
 #include <map>
 #include <vector>
 
-// static NeuralNetwork network;
 NeuralNetwork<NN_HIDDEN_NEURONS>* network = new NeuralNetwork<NN_HIDDEN_NEURONS>();
 
 uint16_t num_epochs = 0;
@@ -89,8 +80,6 @@ static int get_input_data(size_t offset, size_t length, float *out_ptr) {
 }
 
 void train(int nb, bool only_forward) {
-  // Serial.println("LOG_START");
-
   signal_t signal;
   signal.total_length = EI_CLASSIFIER_RAW_SAMPLE_COUNT;
   signal.get_data = &get_input_data;
@@ -102,17 +91,13 @@ void train(int nb, bool only_forward) {
     return;
   }
 
-  float myTarget[3] = {0};
-  myTarget[nb - 1] = 1.f; // button 1 -> {1,0,0};  button 2 -> {0,1,0};  button 3 -> {0,0,1}
+  float myTarget[network->OutputNodes] = {0};
+  myTarget[nb - 1] = 1.f; // button 1 -> {1,0,0,0};  button 2 -> {0,1,0,0}, ...
 
-  // FORWARD
-  unsigned long start = micros();
   float forward_error = network->forward(features_matrix.buffer, myTarget);
-  // Serial.println("Millis: " + String(micros()-start));
 
   float backward_error = 0;
   if (!only_forward) {
-    // BACKWARD
     backward_error = network->backward(features_matrix.buffer, myTarget);
     num_epochs++;
   }
@@ -120,8 +105,6 @@ void train(int nb, bool only_forward) {
   float error = forward_error;
 
   float* myOutput = network->get_output();
-
-  // Serial.println("LOG_END");
 
   // Info to plot & graph!
   Serial.println("graph");

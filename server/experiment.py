@@ -4,7 +4,11 @@ import os
 import time
 from constants import *
 import serial
+import random
 
+seed = 123
+
+random.seed(123)
 
 def main():
     devices = [
@@ -12,7 +16,7 @@ def main():
         # serial.Serial("com6", SERIAL_BR, timeout=5)
     ]
 
-    nodeManager = NodeManager(devices)
+    nodeManager = NodeManager(seed, devices)
     nodeManager.startExperiment()
 
 if __name__ == "__main__":

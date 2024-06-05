@@ -22,9 +22,9 @@ from constants import *
 
 class NodeManager:
 
-    def __init__(self, devices):
+    def __init__(self, seed, devices):
         self.devices = devices
-        self.seed = 123
+        self.seed = seed
         # Keyword samples split
         self.samples_folder = "./datasets/keywords"
         train_samples_split = 160       # Number of samples for training of each keyword
