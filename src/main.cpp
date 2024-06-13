@@ -2,14 +2,13 @@
 #include "Arduino.h"
 #include "RPC.h"
 
-
-#define SERIAL_BR 115200
 #define EIDSP_QUANTIZE_FILTERBANK   0
 #include <training_kws_inference.h>
 
 #include <map>
 
-uint batchSize = 200;
+uint batchSize = 90;
+bool debugEnabled = true;
 
 
 // This variable will hold the recorded audio.
@@ -46,19 +45,20 @@ uint16_t num_epochs = 0;
 std::map<uint16_t, uint16_t> samples_amt;
 
 std::vector<float> getWeightsValues(uint16_t batchNum) {
+  if (debugEnabled) Serial.println("[M7] Getting weights values for batch " + String(batchNum));
   float* myHiddenWeights = network->getHiddenWeights();
   float* myOutputWeights = network->getOutputWeights();
-
+  // Serial.println("[M7] Weights count: " + String(network->getHiddenWeightsAmt()) + " - " + String(network->getOutputWeightsAmt());
   std::vector<float> weights;
   for(uint i = batchNum * batchSize; i < (batchNum+1)*batchSize; i++) {
-    if (i > network->getHiddenWeightsAmt()+network->getOutputWeightsAmt()) break;
+    if (i > network->getHiddenWeightsAmt() + network->getOutputWeightsAmt()) break;
     if (i < network->getHiddenWeightsAmt()) {
       weights.push_back(myHiddenWeights[i]);
     } else {
       weights.push_back(myOutputWeights[i-network->getHiddenWeightsAmt()]);
     }
   }
-  Serial.println("[M7] Sending batch " + String(batchNum) + ". Weights: " + String(weights.size()));
+  if (debugEnabled) Serial.println("[M7] Got the weights for batch " + String(batchNum) + ". Weights: " + String(weights.size()));
   return weights;
 }
 
@@ -66,8 +66,8 @@ std::vector<float> getWeightsValues(uint16_t batchNum) {
 void proxy_serial_m4() {
   while(true) {
     while (RPC.available()) {
-      //Serial.write(RPC.read());
-      RPC.read();
+      Serial.write(RPC.read());
+      // RPC.read();
     }
     rtos::ThisThread::sleep_for(std::chrono::milliseconds(50));
   }
@@ -134,7 +134,7 @@ uint16_t getNewSamplesCount() {
 
 rtos::Thread thread;
 void setup_m7() {
-  Serial.begin(SERIAL_BR);
+  Serial.begin(115200);
   network->initialize(0.6, 0.9);
   RPC.bind("train", train);
   RPC.bind("getNewSamplesCount", getNewSamplesCount);
@@ -170,59 +170,55 @@ void doFL() {
   Serial.println("[M7] Starting FL");
 
   std::vector<uint16_t> nodes = RPC.call("getRoutingTable").as<std::vector<uint16_t>>();
+  Serial.println(nodes.size());
   if (!nodes.size()) {
-    Serial.println("[M7] Empty routing table");
     digitalWrite(LEDB, HIGH);
     return;
-  }  else {
-    Serial.println(String(nodes.size()) + " nodes");
   }
 
-  uint16_t node = 0;
+  uint16_t best_node = 0;
   uint16_t max_epochs_since_last_fl = 0;
   uint16_t max_epochs = 0;
 
-  Serial.println("[M7] Getting nodes epochs");
-  std::map<uint16_t, uint16_t> nodeEpochs = RPC.call("getNodesEpochs").as<std::map<uint16_t, uint16_t>>();
-  Serial.println("[M7] Got nodes epochs");
-  for (auto const& [nodeAddr, amount] : nodeEpochs) {
-      uint16_t amount_since_last_fl = amount - samples_amt[nodeAddr];
-      Serial.println("[M7] Device " + String(nodeAddr) + " captured " + String(amount) + " samples, " + amount_since_last_fl + " since last FL");
+  std::map<uint16_t, uint16_t> node_epochs = RPC.call("getNodesEpochs").as<std::map<uint16_t, uint16_t>>();
+  for (auto const& [node_addr, amount] : node_epochs) {
+      uint16_t amount_since_last_fl = amount - samples_amt[node_addr];
+      // Serial.println("[M7] Device " + String(node_addr) + " captured " + String(amount) + " samples, " + amount_since_last_fl + " since last FL");
       if (amount_since_last_fl >= max_epochs_since_last_fl) {
-        node = nodeAddr;
+        best_node = node_addr;
         max_epochs_since_last_fl = amount_since_last_fl;
         max_epochs = amount;
       }
   }
 
+  Serial.println(max_epochs_since_last_fl);
   if (max_epochs_since_last_fl == 0) {
-    Serial.println("[M7] There are no new samples on any device");
+    // Serial.println("[M7] There are no new samples on any device");
     digitalWrite(LEDB, HIGH);
     return;
   }
 
-  samples_amt[node] = max_epochs;
+  samples_amt[best_node] = max_epochs;
 
   // Update local model (weighted average)
   float localWeightFactor = num_epochs / (float)(num_epochs + max_epochs_since_last_fl);
   float externalWeightFactor = max_epochs_since_last_fl / (float)(num_epochs + max_epochs_since_last_fl);
 
-  Serial.println("[M7] Local num epochs: " + String(num_epochs) + ". External: " + String(max_epochs_since_last_fl));
-  Serial.println("[M7] Local weight factor: " + String(localWeightFactor) + ". External: " + String(externalWeightFactor));
+  Serial.println(localWeightFactor);
+  Serial.println(externalWeightFactor);
+  // Serial.println("[M7] Local num epochs: " + String(num_epochs) + ". External: " + String(max_epochs_since_last_fl));
+  // Serial.println("[M7] Local weight factor: " + String(localWeightFactor) + ". External: " + String(externalWeightFactor));
   
   float* myHiddenWeights = network->getHiddenWeights();
   float* myOutputWeights = network->getOutputWeights();
   
 
-  // -------------------
-  Serial.println("READY");
-  
   std::vector<float> weights;
 
   int batches = floor((float)(network->getHiddenWeightsAmt() + network->getOutputWeightsAmt()) / (float)batchSize);
   for (uint16_t batchNum = 0; batchNum < batches; batchNum++) {
-    // Serial.println("[M7] Requesting batch " + String(batchNum));
-    std::vector<float> weights = RPC.call("getNodeWeights", node, batchNum).as<std::vector<float>>();
+    Serial.println("[M7] Requesting batch " + String(batchNum) + "/" + String(batches));
+    std::vector<float> weights = RPC.call("getNodeWeights", best_node, batchNum).as<std::vector<float>>();
     for(uint i = 0; i < weights.size(); i++) {
       uint weightPos = (batchNum * batchSize) + i;
       if (weightPos < network->getHiddenWeightsAmt()) {
@@ -237,7 +233,7 @@ void doFL() {
   num_epochs += max_epochs_since_last_fl;
 
   delay(1000);
-  Serial.println("[M7] FL Done FL Done FL Done FL DoneFL Done FL Done FL Done FL Done FL Done FL Done");
+  Serial.println("[M7] FL_DONE");
   digitalWrite(LEDB, HIGH);
 }
 
@@ -249,7 +245,7 @@ void loop_m7() {
     } else if (read == 't') {   // Train with a sample
       trainWithSerialSample();
     } else if (read == 'r') {
-      // Serial.println("[M7] Requesting routing table to M4");
+      Serial.println("[M7] Requesting routing table to M4");
       std::vector<uint16_t> nodes = RPC.call("getRoutingTable").as<std::vector<uint16_t>>();
       Serial.println("Nodes: " + String(nodes.size()));
       for(uint i = 0; i < nodes.size(); i++) {
@@ -292,44 +288,52 @@ void ei_printf(const char *format, ...) {
 
 #ifdef CORE_CM4
 
-// static signed short sampleBuffer[2048]; // PDM sample buffer
-
 volatile bool lock_modem = false;
 
 std::vector<uint16_t> getRoutingTable() {
   lock_modem = true;
   std::vector<uint16_t> nodes;
-  RPC.println("[M4] Getting routing table");
+  // if (debugEnabled) RPC.println("[M4] Getting routing table");
   Serial1.write('r'); // Send command
   while (!Serial1.available()) {
-    RPC.println("[M4] Waiting for nodes count");
+    // if (debugEnabled) RPC.println("[M4] Waiting for nodes count");
     delay(500);
   }
   uint8_t count = Serial1.read();
-  RPC.println("[M4] Number of nodes: " + String(count));
+  // if (debugEnabled) RPC.println("[M4] Number of nodes: " + String(count));
   for (int i = 0; i < count; i++) {
     while (Serial1.available() < 2) {
-      RPC.println("[M4] Waiting for node address");
+      // if (debugEnabled) RPC.println("[M4] Waiting for node address");
       delay(500);
     }
     uint16_t node;
     Serial1.readBytes((char*)&node, 2);
     nodes.push_back(node);
-    RPC.println("[M4] Node " + String(i + 1) + ": " + String(nodes[i]));
+    // if (debugEnabled) RPC.println("[M4] Node " + String(i + 1) + ": " + String(nodes[i]));
   }
   lock_modem = false;
   return nodes;
 }
 
 int getModemMessage(byte*& bytesPtr, uint16_t &recipient) {
-  uint limit = millis() + 30000;
+  uint limit = millis() + 10000;
   while (millis() < limit) {
-    RPC.println("[M4] Waiting for modem message"); delay(1000);
+    digitalWrite(LEDG, LOW);
+    delay(250);
+    digitalWrite(LEDG, HIGH);
+    delay(250);
+    if (debugEnabled) RPC.println("[M4] Waiting for modem message");
     if (Serial1.available()) {
       char command = Serial1.read();
-      RPC.println("[M4] Recevied command: " + String(command));
+      if (command != 'r') {
+        RPC.println("[M4] Unknown command received " + String(command));
+        while(true) {
+          RPC.print(Serial1.read());
+        }
+      }
+      if (debugEnabled) RPC.println("[M4] Received command: " + String(command));
       while (Serial1.available() < 2) {
-        RPC.println("[M4] Waiting for recipient");
+        if (debugEnabled) RPC.println("[M4] Waiting for recipient");
         delay(100);
       }
 
@@ -339,7 +343,7 @@ int getModemMessage(byte*& bytesPtr, uint16_t &recipient) {
       memcpy(&recipient, addressBytes, sizeof(uint16_t));
 
       while (Serial1.available() < 2) {
-        RPC.println("[M4] Waiting for bytes count");
+        if (debugEnabled) RPC.println("[M4] Waiting for bytes count");
         delay(100);
       }
 
@@ -349,20 +353,23 @@ int getModemMessage(byte*& bytesPtr, uint16_t &recipient) {
       Serial1.readBytes(countBytes, 2);
       memcpy(&bytesCount, countBytes, sizeof(uint16_t));
 
-      RPC.println("[M4] Bytes count: " + String(bytesCount));
+      if (debugEnabled) RPC.println("[M4] Bytes count: " + String(bytesCount));
       bytesPtr = (byte*) malloc(bytesCount);
-      RPC.println("Receiving bytes");
+      if (debugEnabled) RPC.println("[M4] Receiving bytes");
       for (int i = 0; i < bytesCount; i++) {
-        while (!Serial1.available()) { RPC.println("[M4] Waiting for byte " + String(i+1)); delay(100); }
+        while (!Serial1.available()) {
+          if (debugEnabled) RPC.println("[M4] Waiting for byte " + String(i+1)); 
+          delay(100); 
+        }
         bytesPtr[i] = Serial1.read();
-        RPC.println("[M4] Got byte " + String(i + 1) + " (int): " + String((int)bytesPtr[i]));
+        // if (debugEnabled) RPC.println("[M4] Got byte " + String(i + 1) + " (int): " + String((int)bytesPtr[i]));
       }
-      RPC.print("[M4] Modem received " + String(bytesCount) + " bytes");
+      if (debugEnabled) RPC.println("[M4] Modem received " + String(bytesCount) + " bytes");
       return bytesCount;
     }
   }
 
-  RPC.println("[M4] Get modem message timeout");
+  if (debugEnabled) RPC.println("[M4] Get modem message timeout");
   return 0;
 }
 
@@ -370,7 +377,7 @@ byte* defpointer;
 int sendModemMessage(uint16_t recipient, uint16_t size, byte* bytes, bool expectResponse = false, byte*& response = defpointer) {
   bool received = false;
   while (!received) {
-    RPC.println("[M4] Attempting to send message");
+    if (debugEnabled) RPC.println("[M4] Attempting to send message");
     Serial1.write('s'); // Send command
     Serial1.write(static_cast<byte*>(static_cast<void*>(&recipient)), 2);
     Serial1.write(static_cast<byte*>(static_cast<void*>(&size)), 2);
@@ -397,7 +404,7 @@ std::map<uint16_t, uint16_t> getNodesEpochs() {
   for (uint i = 0; i < nodes.size(); i++) {
     byte data[1] = {'n'};
     byte* response;
-    RPC.println("Sending message requesting epochs");
+    // if (debugEnabled) RPC.println("[M4] Sending message requesting epochs");
     int responseLength = sendModemMessage(nodes[i], 1, data, true, response);
     uint16_t amount;
     std::memcpy(&amount, response, sizeof(uint16_t));
@@ -409,7 +416,7 @@ std::map<uint16_t, uint16_t> getNodesEpochs() {
 
 std::vector<float> getNodeWeights(uint16_t node, int batchNum) {
   lock_modem = true;
-  RPC.print("[M4] Batch "); RPC.print(batchNum); RPC.println(" requested");
+  if (debugEnabled) RPC.println("[M4] Requesting batch " + String(batchNum));
 
   // Send a 'g' to the other devices so they start sending me their data
   byte data[3] = {'g', 0, 0};
@@ -417,11 +424,11 @@ std::vector<float> getNodeWeights(uint16_t node, int batchNum) {
   byte* response;
   int responseLength = sendModemMessage(node, 3, data, true, response);
 
-  RPC.println("[M4] Batch " + String(batchNum) + " received, responseLength: "+ String(responseLength));
+  if (debugEnabled) RPC.println("[M4] Batch " + String(batchNum) + " received, responseLength: "+ String(responseLength));
   std::vector<float> weights;
-  for (int k = 0; k < responseLength; k++) {
-    weights.push_back(response[k]);
-    // TODO: In this new version only byte float is supported
+  float* weights_array = (float*) response;
+  for (int i = 0; i < responseLength; i++) {
+    weights.push_back(weights_array[i]);
   }
   lock_modem = false;
   return weights;
@@ -429,45 +436,41 @@ std::vector<float> getNodeWeights(uint16_t node, int batchNum) {
 
 void sendNewSamplesCount(uint16_t recipient) {
   uint16_t num_epochs = RPC.call("getNewSamplesCount").as<uint16_t>();
-
-  RPC.println("[M4] Received samples count request, returning " + String(num_epochs));
+  if (debugEnabled) RPC.println("[M4] Received samples count request, returning " + String(num_epochs));
   byte data[2];
   std::memcpy(&data, &num_epochs, sizeof(uint16_t));
   int responseLength = sendModemMessage(recipient, sizeof(uint16_t), data);
 }
 
 void sendWeights(uint16_t recipient, uint16_t batchNum) {
-  RPC.println("[M4] Received weights request for batch : " + String(batchNum));
+  if (debugEnabled) RPC.println("[M4] Received weights request for batch " + String(batchNum) + " from " + String(recipient));
   std::vector<float> weights = RPC.call("getWeightsValues", batchNum).as<std::vector<float>>();
-  RPC.println("[M4] Recevied " + String(weights.size()) + " weights from getWeightsValues, batch size is: " + String(weights.size()));
-  byte weightsArr[batchSize];
+  if (debugEnabled) RPC.println("[M4] Received " + String(weights.size()) + " weights from getWeightsValues, batch size is: " + String(weights.size()));
+  float weightsArr[batchSize];
   for(uint i = 0; i < weights.size(); i++) {
-    weightsArr[i] = (byte) weights[i];
+    weightsArr[i] = weights[i];
   }
-  sendModemMessage(recipient, weights.size(), weightsArr);
+  if (debugEnabled) RPC.println("[M4] Sending batch...");
+  sendModemMessage(recipient, sizeof(weights), (byte*) weightsArr);
   RPC.println("[M4] Batch sent!");
 }
 
 void setup_m4() {
-  Serial1.begin(SERIAL_BR);
+  Serial1.begin(4800);
   
   RPC.bind("getRoutingTable", getRoutingTable);
   RPC.bind("getNodesEpochs", getNodesEpochs);
   RPC.bind("getNodeWeights", getNodeWeights);
-  /*if (microphone_setup() == false) {
-    ei_printf("ERR: Failed to setup audio sampling\r\n");
-    return;
-  }*/
 }
 
 void loop_m4() {
   if (!lock_modem && Serial1.available()) { // Mesagge from LoRaMesher
-    RPC.println("[M4] Modem message is available!");
+    if (debugEnabled) RPC.println("[M4] Modem message is available!");
     byte* bytes;
     uint16_t recipient;
     int bytesCount = getModemMessage(bytes, recipient);
 
-    RPC.println("[M4] Received " + String(bytesCount) + " bytes from modem");
+    if (debugEnabled) RPC.println("[M4] Received " + String(bytesCount) + " bytes from modem");
     if (bytesCount == 3 && (char) bytes[0] == 'g') {
       uint16_t batchNum;
       std::memcpy(&batchNum, &bytes[1], sizeof(int16_t));

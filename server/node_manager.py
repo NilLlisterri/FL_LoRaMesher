@@ -25,24 +25,21 @@ class NodeManager:
     def __init__(self, seed, devices):
         self.devices = devices
         self.seed = seed
-        # Keyword samples split
+
         self.samples_folder = "./datasets/keywords"
         train_samples_split = 160       # Number of samples for training of each keyword
         test_samples_split = 20         # Number of samples for training of each keyword
 
         # Experiment sizes
         self.training_epochs = 160      # Amount of training epochs. Can't be more than kws * train_samples_split
-        self.testing_epochs = 60        # Amount of test samples of each keyword. Can't be more than kws * test_samples_split
+        self.testing_epochs = 20        # Amount of test samples of each keyword. Can't be more than kws * test_samples_split
 
         self.momentum = 0.9
         self.learningRate= 0.05
 
-        self.enableTest = False
-        self.enablePlot = True
-        self.batch_size = 8             # Must be divisble by the amount of keywords
-        self.scaledWeightsBytes = 2
-        self.scaledWeightBits = 16
-        self.interactive = True
+        self.enableTest = True
+        self.enablePlot = False
+        self.batchSize = 4             # Must be divisble by the amount of keywords
 
         self.keywords_buttons = {
             "montserrat": 1,
@@ -137,12 +134,12 @@ class NodeManager:
 
     # Batch size: The amount of samples to send
     def sendSamples(self, device, deviceIndex, batch_index):
-        start = ((deviceIndex*self.training_epochs) + (batch_index * self.batch_size)) #%len(keywords)
-        end = ((deviceIndex*self.training_epochs) + (batch_index * self.batch_size) + self.batch_size) #%len(keywords)
+        start = ((deviceIndex*self.training_epochs) + (batch_index * self.batchSize)) #%len(keywords)
+        end = ((deviceIndex*self.training_epochs) + (batch_index * self.batchSize) + self.batchSize) #%len(keywords)
 
         if self.debug: print(f"[{device.port}] Sending samples of batch {batch_index + 1}, from {start+1} to {end}")
 
-        for i in range(start, end):
+        for i in tqdm(range(start, end), desc=f"Sending batch {batch_index}"):
             filename = self.keywords[i % len(self.keywords)]
             keyword = filename.split("/")[0]
             num_button = self.keywords_buttons[keyword]
@@ -173,7 +170,7 @@ class NodeManager:
             data = json.load(f)
             values = data['payload']['values']
             
-            for value in tqdm(values):
+            for value in values:
                 device.write(struct.pack('h', value))
                 # device.read()
 
@@ -191,8 +188,8 @@ class NodeManager:
         successes_queue = Queue()
 
         if self.debug: print(f"[{device.port}] Sending {self.testing_epochs} test samples")
-        for i, filename in enumerate(self.test_keywords[:self.testing_epochs]):
-            if self.debug: print(f"[{device.port}] Sending test sample {i}/{self.testing_epochs}")
+        for filename in tqdm(self.test_keywords[:self.testing_epochs], desc="Sending test samples"):
+            if self.debug: print(f"[{device.port}] Sending test sample {self.testing_epochs}")
             keyword = filename.split("/")[0]
             num_button = self.keywords_buttons[keyword]
             
@@ -202,8 +199,8 @@ class NodeManager:
         
         test_accuracy = sum(successes_queue.queue)/len(successes_queue.queue)
         test_error = sum(errors_queue.queue)/len(errors_queue.queue)
-        print(f"[{device.port}] Testing accuracy: {test_accuracy}")
-        print(f"[{device.port}] Testing MSE: {test_error}")
+        if self.debug: print(f"[{device.port}] Testing accuracy: {test_accuracy}")
+        if self.debug: print(f"[{device.port}] Testing MSE: {test_error}")
         self.test_accuracies_map[deviceIndex].append(test_accuracy)
         self.test_errors_map[deviceIndex].append(test_error)
 
@@ -272,10 +269,6 @@ class NodeManager:
 
             plt.pause(0.1)
             time.sleep(0.4)
-
-    # It can be used to debug certain steps in the communication
-    def readSerial(self):
-        while True: print(self.devices[0].readline())
     
     def sendTestAllDevices(self):
         threads = []
@@ -294,6 +287,39 @@ class NodeManager:
             #plt.plot(training_accuracy_map[device_index], label=f"Device {device_index}")
             plt.plot(self.test_accuracies_map[device_index], label=f"Device {device_index}")
 
+    def doFL(self):
+        device = self.devices[0]
+        device.write(b'>')
+
+        fl_start_confirmation = device.readline().decode()
+        if self.debug: print(f"[{device.port}] Fl start confirmation: {fl_start_confirmation}")
+        nodes_count = device.readline().decode()
+        if self.debug: print(f"[{device.port}] Routing nodes count: {nodes_count}")
+        if (nodes_count == "0\r\n"):
+            print("No nodes found")
+            exit()
+
+        max_epochs_since_last_fl = device.readline().decode()
+        if self.debug: print(f"[{device.port}] Max epochs since last FL: {max_epochs_since_last_fl}")
+        if (max_epochs_since_last_fl == "0\r\n"):
+            print("No new samples on other nodes")
+            exit()
+        
+        localWeightFactor = device.readline().decode()
+        if self.debug: print(f"[{device.port}] Local weights factor: {localWeightFactor}")
+        externalWeightFactor = device.readline().decode()
+        if self.debug: print(f"[{device.port}] External weights factor: {externalWeightFactor}")
+
+        line = ''
+        while True:
+            if self.devices[1].in_waiting: print(f"[{self.devices[1].port}] {self.devices[1].readline().decode()}")
+            if device.in_waiting:
+                line = device.readline().decode()
+                print(f"[{device.port}] {line}")
+                if ("FL_DONE" in line):
+                    break
+        
+
     def startExperiment(self):
         # self.initializeDevices()
     
@@ -303,9 +329,9 @@ class NodeManager:
             thread.start()
 
         train_ini_time = time.time()
-        num_batches = int(self.training_epochs/self.batch_size)
+        num_batches = int(self.training_epochs/self.batchSize)
 
-        if self.enableTest: self.sendTestAllDevices() # Initial accuracy
+        # if self.enableTest: self.sendTestAllDevices() # Initial accuracy
 
         # Train the device
         for batch in range(num_batches):
@@ -322,14 +348,16 @@ class NodeManager:
             
             time.sleep(1)
 
+            self.doFL()
+
             if self.enableTest:
-                if self.debug: print(f"[{device.port}] Sending test samples")
                 self.sendTestAllDevices() # To calculate the accuracy on every epoch
 
         if self.debug: print(f'[MAIN] Training completed in {time.time() - train_ini_time}s')
 
-        self.sendTestAllDevices() # Final accuracy
+        # self.sendTestAllDevices() # Final accuracy
 
+        self.plotAccuracies()
         figname = f"plots/{len(self.devices)}-{HIDDEN_NODES}.png"
         plt.savefig(figname, format='png')
         print(f"Generated {figname}")

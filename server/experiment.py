@@ -13,7 +13,7 @@ random.seed(123)
 def main():
     devices = [
         serial.Serial("com4", SERIAL_BR, timeout=5),
-        # serial.Serial("com6", SERIAL_BR, timeout=5)
+        serial.Serial("com6", SERIAL_BR, timeout=5)
     ]
 
     nodeManager = NodeManager(seed, devices)
