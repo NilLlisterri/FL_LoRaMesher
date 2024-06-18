@@ -39,7 +39,7 @@ class NodeManager:
 
         self.enableTest = True
         self.enablePlot = False
-        self.batchSize = 4             # Must be divisble by the amount of keywords
+        self.batchSize = 2             # Must be divisble by the amount of keywords
 
         self.keywords_buttons = {
             "montserrat": 1,
