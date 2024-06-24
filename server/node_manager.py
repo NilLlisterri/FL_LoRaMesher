@@ -294,21 +294,21 @@ class NodeManager:
         fl_start_confirmation = device.readline().decode()
         if self.debug: print(f"[{device.port}] Fl start confirmation: {fl_start_confirmation}")
         nodes_count = device.readline().decode()
-        if self.debug: print(f"[{device.port}] Routing nodes count: {nodes_count}")
+        # if self.debug: print(f"[{device.port}] Routing nodes count: {nodes_count}")
         if (nodes_count == "0\r\n"):
             print("No nodes found")
             exit()
 
         max_epochs_since_last_fl = device.readline().decode()
-        if self.debug: print(f"[{device.port}] Max epochs since last FL: {max_epochs_since_last_fl}")
+        # if self.debug: print(f"[{device.port}] Max epochs since last FL: {max_epochs_since_last_fl}")
         if (max_epochs_since_last_fl == "0\r\n"):
             print("No new samples on other nodes")
             exit()
         
         localWeightFactor = device.readline().decode()
-        if self.debug: print(f"[{device.port}] Local weights factor: {localWeightFactor}")
+        # if self.debug: print(f"[{device.port}] Local weights factor: {localWeightFactor}")
         externalWeightFactor = device.readline().decode()
-        if self.debug: print(f"[{device.port}] External weights factor: {externalWeightFactor}")
+        # if self.debug: print(f"[{device.port}] External weights factor: {externalWeightFactor}")
 
         line = ''
         while True:

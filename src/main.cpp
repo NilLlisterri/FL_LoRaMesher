@@ -9,10 +9,10 @@
 #include <map>
 #include <vector>
 
-uint batchSize = 80;
+uint batchSize = 100;
 bool debugEnabled = false;
 typedef uint16_t scaledType;
-uint scaled_weights_bits = 8;
+uint scaled_weights_bits = 4;
 
 
 // This variable will hold the recorded audio.
@@ -186,23 +186,23 @@ volatile bool lock_modem = false;
 std::vector<uint16_t> getRoutingTable() {
   lock_modem = true;
   std::vector<uint16_t> nodes;
-  // if (debugEnabled) Serial.println("Getting routing table");
+  if (debugEnabled) Serial.println("Getting routing table");
   Serial1.write('r'); // Send command
   while (!Serial1.available()) {
-    // if (debugEnabled) Serial.println("Waiting for nodes count");
+    if (debugEnabled) Serial.println("Waiting for nodes count");
     delay(500);
   }
   uint8_t count = Serial1.read();
-  // if (debugEnabled) Serial.println("Number of nodes: " + String(count));
+  if (debugEnabled) Serial.println("Number of nodes: " + String(count));
   for (int i = 0; i < count; i++) {
     while (Serial1.available() < 2) {
-      // if (debugEnabled) Serial.println("Waiting for node address");
+      if (debugEnabled) Serial.println("Waiting for node address");
       delay(500);
     }
     uint16_t node;
     Serial1.readBytes((char*)&node, 2);
     nodes.push_back(node);
-    // if (debugEnabled) Serial.println("Node " + String(i + 1) + ": " + String(nodes[i]));
+    if (debugEnabled) Serial.println("Node " + String(i + 1) + ": " + String(nodes[i]));
   }
   lock_modem = false;
   return nodes;
@@ -255,7 +255,6 @@ int getModemMessage(byte*& bytesPtr, uint16_t &recipient) {
           delay(100); 
         }
         bytesPtr[i] = Serial1.read();
-        // if (debugEnabled) Serial.println("Got byte " + String(i + 1) + " (int): " + String((int)bytesPtr[i]));
       }
       if (debugEnabled) Serial.println("Modem received " + String(bytesCount) + " bytes");
       return bytesCount;
@@ -321,30 +320,26 @@ std::vector<float> getNodeWeights(uint16_t node, int batchNum) {
 
   if (debugEnabled) Serial.println("Batch " + String(batchNum) + " received, responseLength: "+ String(response_bytes));
 
-  // TODO: Read min_w, max_w and weights
   float min_w, max_w;
   memcpy(&min_w, &response[0], sizeof(float));
-  memcpy(&max_w, &response[4], sizeof(float));
+  memcpy(&max_w, &response[sizeof(float)], sizeof(float));
 
   if (debugEnabled) Serial.println("Received min weight: " + String(min_w) + " Received max weight: " + String(max_w));
 
   std::vector<float> weights;
-  int currentResponseBit = sizeof(float) * 2; // After 2 floats
+  uint currentResponseBit = sizeof(float) * 2 * 8; // After 2 floats
   scaledType weight = 0;
   for (uint byte = 0; byte < response_bytes - (sizeof(float) * 2); byte++) {
     for (uint bit = 0; bit < scaled_weights_bits; bit++) {
-      uint value = (response[currentResponseBit/8] >> currentResponseBit % 8) & 1;
-      weight |= value;
+      uint bitValue = (response[currentResponseBit/8] >> 7 - (currentResponseBit % 8)) & 1;
       weight = weight << 1;
+      weight |= bitValue;
+      currentResponseBit++;
     }
+    if (byte == 0) Serial.println("Rreceived first weight: " + String(weight));
     weights.push_back(deScaleWeight(min_w, max_w, weight));
     weight = 0;
   }
-
-
-  Serial.println("RECEIVED FIRST WEIGHT VALUE: " + String(weights[0]));
-  Serial.println("LAST SCALED WEIGHT VALUE: " +  String(weights[weights.size()-1]));
-  Serial.println("RECEIVED FIRST DATA BYTE: " + String(response[8]));
 
   lock_modem = false;
   return weights;
@@ -443,20 +438,15 @@ void sendWeights(uint16_t recipient, uint16_t batchNum) {
 
   uint currentBit = sizeof(float) * 2 * 8;
   for(uint i = 0; i < weights.size(); i++) {
-    scaledType scaledWeight = scaleWeight(min_w, max_w, weights[i]);
-    if (i == 0) Serial.println("FIRST WEIGHT VALUE: " + String(weights[i]));
-    if (i == weights.size() - 1) Serial.println("LAST SCALED WEIGHT VALUE: " + String(weights[i]));
+    if (i == 0 && debugEnabled) Serial.println("First weight: " + String(weights[i]));
     for (uint j = 0; j < scaled_weights_bits; j++) {
-      uint weightBitPosition = (sizeof(scaledType) * 8) - scaled_weights_bits + j;
-      // The next bit value
-      uint value = (scaledWeight >> weightBitPosition) & 1;
+      uint shiftBits = scaled_weights_bits - j - 1;
+      uint bitValue = (weights[i] >> shiftBits) & 1;
       // Set the bit of the current byte (result must be initialized to 0)
-      data[currentBit / 8] |= value << (currentBit % 8);
+      data[currentBit / 8] |= bitValue << (7 - (currentBit % 8));
       currentBit += 1;
     }
   }
-
-  Serial.println("FIRST DATA BYTE: " + String(data[8]));
 
   sendModemMessage(recipient, num_bytes, data);
 }
