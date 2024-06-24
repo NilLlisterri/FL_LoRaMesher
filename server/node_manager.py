@@ -216,11 +216,9 @@ class NodeManager:
         if self.debug: print(f"[{device.port}] Num epochs: {ne}")
         n_epooch = int(ne)
 
-        n_error = device.read(4)
-        [n_error] = struct.unpack('f', n_error)
         nb = device.readline()[:-2]
-        self.graph.append([n_epooch, n_error, deviceIndex])
-        return n_error, outputs.index(max(outputs)) + 1
+        self.graph.append([n_epooch, error, deviceIndex])
+        return error, outputs.index(max(outputs)) + 1
 
     def plot(self, title):
         warnings.filterwarnings("ignore")
@@ -309,6 +307,8 @@ class NodeManager:
         # if self.debug: print(f"[{device.port}] Local weights factor: {localWeightFactor}")
         externalWeightFactor = device.readline().decode()
         # if self.debug: print(f"[{device.port}] External weights factor: {externalWeightFactor}")
+        numBatches = device.readline().decode()
+        # if self.debug: print(f"[{device.port}] Num batches: {numBatches}")
 
         line = ''
         while True:

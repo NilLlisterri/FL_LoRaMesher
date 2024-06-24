@@ -15,26 +15,22 @@ typedef uint16_t scaledType;
 uint scaled_weights_bits = 4;
 
 
-// This variable will hold the recorded audio.
-// Ideally this would only hold the features extracted in this core, but we have to support serial training on the M7, and that would require that bot cores knew how to extract the features
-struct sharedMemory {
-  // int var; // Required when a struct contains a flexible array member
-  int16_t audio_input_buffer[16000];
-  // float weights[hiddenWeightsAmt+outputWeightsAmt];
-};
-/* Datasheet: https://www.st.com/resource/en/reference_manual/dm00176879-stm32h745-755-and-stm32h747-757-advanced-arm-based-32-bit-mcus-stmicroelectronics.pdf
-   In this region (SRAM3) we can use 32767 bytes (32kB)
-   "AHB SRAM3 is mapped at address 0x3004 0000 and accessible by all system
-    masters except BDMA through D2 domain AHB matrix. AHB SRAM3 can be used
-    as buffers to store peripheral input/output data for Ethernet and USB, or as shared
-    memory between the two cores."
+/* 
+  This variable will hold the recorded audio.
+  Ideally this would only hold the features extracted in this core, but we have to support serial training on the M7, and that would require that bot cores knew how to extract the features
+  Datasheet: https://www.st.com/resource/en/reference_manual/dm00176879-stm32h745-755-and-stm32h747-757-advanced-arm-based-32-bit-mcus-stmicroelectronics.pdf
+  In this region (SRAM3) we can use 32767 bytes (32kB)
+  "AHB SRAM3 is mapped at address 0x3004 0000 and accessible by all system
+  masters except BDMA through D2 domain AHB matrix. AHB SRAM3 can be used
+  as buffers to store peripheral input/output data for Ethernet and USB, or as shared
+  memory between the two cores."
 */
+struct sharedMemory {
+  int16_t audio_input_buffer[16000];
+};
 volatile struct sharedMemory * const shared_ptr = (struct sharedMemory *)0x30040000;
-
 NeuralNetwork<NN_HIDDEN_NEURONS>* network = new NeuralNetwork<NN_HIDDEN_NEURONS>();
-
 uint16_t num_epochs = 0;
-
 
 void getScaleRange(float &a, float &b) {
     a = 0;
@@ -53,29 +49,14 @@ float deScaleWeight(float min_w, float max_w, scaledType weight) {
     return min_w + ( (weight-a)*(max_w-min_w) / (b-a) );
 }
 
+std::vector<float> getRawWeights(uint16_t batchNum, float &min_w, float &max_w) {
+  std::vector<float> weights;
 
-std::vector<scaledType> getWeightsValues(uint16_t batchNum, float &min_w, float &max_w) {
-  if (debugEnabled) Serial.println("Getting weights values for batch " + String(batchNum));
   float* hidden_weights = network->getHiddenWeights();
   float* output_weights = network->getOutputWeights();
 
-  // TODO: Calculate per batch, not absolute totals
-  float min_weight = hidden_weights[0];
-  float max_weight = hidden_weights[0];
-  for(uint i = 0; i < network->getHiddenWeightsAmt(); i++) {
-      if (min_weight > hidden_weights[i]) min_weight = hidden_weights[i];
-      if (max_weight < hidden_weights[i]) max_weight = hidden_weights[i];
-  }
-  for(uint i = 0; i < network->getOutputWeightsAmt(); i++) {
-      if (min_weight > output_weights[i]) min_weight = output_weights[i];
-      if (max_weight < output_weights[i]) max_weight = output_weights[i];
-  }
-
-  min_w = min_weight;
-  max_w = max_weight;
-
-  std::vector<scaledType> weights;
-  for(uint i = batchNum * batchSize; i < (batchNum+1)*batchSize; i++) {
+  uint start = batchNum * batchSize;
+  for(uint i = start; i < start + batchSize; i++) {
     float weight;
     if (i > network->getHiddenWeightsAmt() + network->getOutputWeightsAmt()) break;
     if (i < network->getHiddenWeightsAmt()) {
@@ -83,23 +64,27 @@ std::vector<scaledType> getWeightsValues(uint16_t batchNum, float &min_w, float 
     } else {
       weight = output_weights[i-network->getHiddenWeightsAmt()];
     }
-    scaledType scaledWeight = scaleWeight(min_weight, max_weight, weight);
-    weights.push_back(scaledWeight);
+    weights.push_back(weight);
+
+    if (i == start || min_w > weight) min_w = weight;
+    if (i == start || max_w < weight) max_w = weight;
   }
-  if (debugEnabled) Serial.println("Got the weights for batch " + String(batchNum) + ". Weights: " + String(weights.size()));
   return weights;
 }
 
-// Check the RPC buffer and print it to serial
-// void proxy_serial_m4() {
-//   while(true) {
-//     while (RPC.available()) {
-//       Serial.write(RPC.read());
-//       // RPC.read();
-//     }
-//     rtos::ThisThread::sleep_for(std::chrono::milliseconds(50));
-//   }
-// }
+std::vector<scaledType> getScaledWeights(uint16_t batchNum, float &min_w, float &max_w) {
+  if (debugEnabled) Serial.println("Getting weights values for batch " + String(batchNum));
+  std::vector<float> raw_weights = getRawWeights(batchNum, min_w, max_w);
+
+  std::vector<scaledType> weights;
+  for(uint i = 0; i < raw_weights.size(); i++) {
+    scaledType scaledWeight = scaleWeight(min_w, max_w, raw_weights[i]);
+    weights.push_back(scaledWeight);
+  }
+
+  if (debugEnabled) Serial.println("Got the weights for batch " + String(batchNum) + ". Weights: " + String(weights.size()));
+  return weights;
+}
 
 // I don't like this cast to non-volatile...
 static int get_input_data(size_t offset, size_t length, float *out_ptr) {
@@ -115,7 +100,7 @@ void train(int nb, bool only_forward) {
 
   EI_IMPULSE_ERROR r = get_one_second_features(&signal, &features_matrix, false);
   if (r != EI_IMPULSE_OK) {
-    ei_printf("ERR: Failed to get features (%d)\n", r);
+    Serial.println("ERR: Failed to get features (" + String(r) + ")");
     return;
   }
 
@@ -124,40 +109,21 @@ void train(int nb, bool only_forward) {
 
   float forward_error = network->forward(features_matrix.buffer, myTarget);
 
-  float backward_error = 0;
   if (!only_forward) {
-    backward_error = network->backward(features_matrix.buffer, myTarget);
+    network->backward(features_matrix.buffer, myTarget);
     num_epochs++;
   }
 
-  float error = forward_error;
-
-  float* myOutput = network->get_output();
-
-  // Info to plot & graph!
   Serial.println("graph");
-
-  // Print outputs
   for (size_t i = 0; i < network->OutputNodes; i++) {
-    ei_printf_float(myOutput[i]);
+    Serial.print(network->get_output()[i], 5);
     Serial.print(" ");
   }
   Serial.print("\n");
-
-  // Print error
-  ei_printf_float(error);
-  Serial.print("\n");
-
+  Serial.println(forward_error, 5);
   Serial.println(num_epochs, DEC);
-
-  char* myError = (char*) &error;
-  Serial.write(myError, sizeof(float));
-
   Serial.println(nb, DEC);
 }
-
-
-
 
 void trainWithSerialSample() {
   while (!Serial.available()) {}
@@ -298,7 +264,6 @@ std::map<uint16_t, uint16_t> getNodesEpochs() {
   for (uint i = 0; i < nodes.size(); i++) {
     byte data[1] = {'n'};
     byte* response;
-    // if (debugEnabled) Serial.println("Sending message requesting epochs");
     int responseLength = sendModemMessage(nodes[i], 1, data, true, response);
     uint16_t amount;
     std::memcpy(&amount, response, sizeof(uint16_t));
@@ -308,7 +273,7 @@ std::map<uint16_t, uint16_t> getNodesEpochs() {
   return res;
 }
 
-std::vector<float> getNodeWeights(uint16_t node, int batchNum) {
+std::vector<float> requestWeights(uint16_t node, int batchNum) {
   lock_modem = true;
   if (debugEnabled) Serial.println("Requesting batch " + String(batchNum));
 
@@ -336,7 +301,7 @@ std::vector<float> getNodeWeights(uint16_t node, int batchNum) {
       weight |= bitValue;
       currentResponseBit++;
     }
-    if (byte == 0) Serial.println("Rreceived first weight: " + String(weight));
+    if (debugEnabled && byte == 0) Serial.println("Received first weight: " + String(weight));
     weights.push_back(deScaleWeight(min_w, max_w, weight));
     weight = 0;
   }
@@ -352,7 +317,7 @@ void doFL() {
   digitalWrite(LEDB, LOW);
   Serial.println("Starting FL");
 
-  std::vector<uint16_t> nodes = getRoutingTable(); // RPC.call("getRoutingTable").as<std::vector<uint16_t>>();
+  std::vector<uint16_t> nodes = getRoutingTable();
   Serial.println(nodes.size());
   if (!nodes.size()) {
     digitalWrite(LEDB, HIGH);
@@ -363,10 +328,9 @@ void doFL() {
   uint16_t max_epochs_since_last_fl = 0;
   uint16_t max_epochs = 0;
 
-  std::map<uint16_t, uint16_t> node_epochs = getNodesEpochs(); // RPC.call("getNodesEpochs").as<std::map<uint16_t, uint16_t>>();
+  std::map<uint16_t, uint16_t> node_epochs = getNodesEpochs();
   for (auto const& [node_addr, amount] : node_epochs) {
       uint16_t amount_since_last_fl = amount - samples_amt[node_addr];
-      // Serial.println("Device " + String(node_addr) + " captured " + String(amount) + " samples, " + amount_since_last_fl + " since last FL");
       if (amount_since_last_fl >= max_epochs_since_last_fl) {
         best_node = node_addr;
         max_epochs_since_last_fl = amount_since_last_fl;
@@ -376,7 +340,6 @@ void doFL() {
 
   Serial.println(max_epochs_since_last_fl);
   if (max_epochs_since_last_fl == 0) {
-    // Serial.println("There are no new samples on any device");
     digitalWrite(LEDB, HIGH);
     return;
   }
@@ -386,20 +349,19 @@ void doFL() {
   // Update local model (weighted average)
   float localWeightFactor = num_epochs / (float)(num_epochs + max_epochs_since_last_fl);
   float externalWeightFactor = max_epochs_since_last_fl / (float)(num_epochs + max_epochs_since_last_fl);
-
   Serial.println(localWeightFactor);
   Serial.println(externalWeightFactor);
 
   float* hidden_weights = network->getHiddenWeights();
   float* output_weights = network->getOutputWeights();
-
   std::vector<float> weights;
 
   int batches = floor((float)(network->getHiddenWeightsAmt() + network->getOutputWeightsAmt()) / (float)batchSize);
+  Serial.println(batches);
+
   for (uint16_t batchNum = 0; batchNum < batches; batchNum++) {
-    if (debugEnabled) Serial.println("Requesting batch " + String(batchNum) + "/" + String(batches));
-    std::vector<float> weights = getNodeWeights(best_node, batchNum); // RPC.call("getNodeWeights", best_node, batchNum).as<std::vector<float>>();
-    // std::vector<scaledType> weights = getNodeWeights(best_node, batchNum); // RPC.call("getNodeWeights", best_node, batchNum).as<std::vector<float>>();
+    Serial.println("Requesting batch " + String(batchNum) + "/" + String(batches));
+    std::vector<float> weights = requestWeights(best_node, batchNum);
     for(uint i = 0; i < weights.size(); i++) {
       uint weightPos = (batchNum * batchSize) + i;
       if (weightPos < network->getHiddenWeightsAmt()) {
@@ -414,25 +376,25 @@ void doFL() {
   num_epochs += max_epochs_since_last_fl;
 
   delay(1000);
-  Serial.println("FL_DONE");
   digitalWrite(LEDB, HIGH);
+  Serial.println("FL_DONE");
 }
 
 
 void sendWeights(uint16_t recipient, uint16_t batchNum) {
   if (debugEnabled) Serial.println("Received weights request for batch " + String(batchNum) + " from " + String(recipient));
   float min_w, max_w;
-  std::vector<scaledType> weights = getWeightsValues(batchNum, min_w, max_w);
-  if (debugEnabled) Serial.println("Received " + String(weights.size()) + " weights from getWeightsValues, batch size is: " + String(weights.size()));
+  std::vector<scaledType> weights = getScaledWeights(batchNum, min_w, max_w);
+  if (debugEnabled) Serial.println("Received " + String(weights.size()) + " weights from getScaledWeights, batch size is: " + String(weights.size()));
 
-  // TODO: First 4 bytes is min_w, second 4 bytes is max_w, rest are weights packed in integers of scaled_weights_bits bits
   uint num_bytes = sizeof(float) * 2 + std::ceil((weights.size() * scaled_weights_bits / 8.0));
 
   if (debugEnabled) Serial.println("Preparing " + String(num_bytes) + " to send");
 
+  // The first 8 bytes will be the min and max weights, the rest will be the quantized weights
   byte data[num_bytes] = {}; // Initialized to zeros
   memcpy(&data, &min_w, sizeof(float));
-  memcpy(&data[4], &max_w, sizeof(float));
+  memcpy(&data[sizeof(float)], &max_w, sizeof(float));
 
   if (debugEnabled) Serial.println("Min weight: " + String(min_w) + " Max weight: " + String(max_w));
 
@@ -442,7 +404,6 @@ void sendWeights(uint16_t recipient, uint16_t batchNum) {
     for (uint j = 0; j < scaled_weights_bits; j++) {
       uint shiftBits = scaled_weights_bits - j - 1;
       uint bitValue = (weights[i] >> shiftBits) & 1;
-      // Set the bit of the current byte (result must be initialized to 0)
       data[currentBit / 8] |= bitValue << (7 - (currentBit % 8));
       currentBit += 1;
     }
@@ -458,27 +419,6 @@ void sendNewSamplesCount(uint16_t recipient) {
   int responseLength = sendModemMessage(recipient, sizeof(uint16_t), data);
 }
 
-
-void ei_printf(const char *format, ...) {
-  static char print_buf[1024] = { 0 };
-
-  va_list args;
-  va_start(args, format);
-  int r = vsnprintf(print_buf, sizeof(print_buf), format, args);
-  va_end(args);
-
-  if (r > 0) {
-    Serial.write(print_buf);
-  }
-}
-
-
-
-
-
-
-  // rtos::Thread thread;
-
 void setup() {
   pinMode(LEDR, OUTPUT);
   pinMode(LEDG, OUTPUT);
@@ -490,11 +430,9 @@ void setup() {
   digitalWrite(LED_BUILTIN, HIGH);
  
   Serial.begin(115200);
-  network->initialize(0.6, 0.9);
-
   Serial1.begin(4800);
 
-  // thread.start(proxy_serial_m4);
+  network->initialize(0.6, 0.9);
 }
 
 
@@ -507,7 +445,7 @@ void loop() {
       trainWithSerialSample();
     } else if (read == 'r') {
       Serial.println("Requesting routing table to M4");
-      std::vector<uint16_t> nodes = getRoutingTable(); // RPC.call("getRoutingTable").as<std::vector<uint16_t>>();
+      std::vector<uint16_t> nodes = getRoutingTable();
       Serial.println("Nodes: " + String(nodes.size()));
       for(uint i = 0; i < nodes.size(); i++) {
         Serial.println(nodes[i]);
@@ -528,7 +466,7 @@ void loop() {
     uint16_t recipient;
     int bytesCount = getModemMessage(bytes, recipient);
 
-    // if (debugEnabled) Serial.println("Received " + String(bytesCount) + " bytes from modem");
+    if (debugEnabled) Serial.println("Received " + String(bytesCount) + " bytes from modem");
     if (bytesCount == 3 && (char) bytes[0] == 'g') {
       uint16_t batchNum;
       std::memcpy(&batchNum, &bytes[1], sizeof(int16_t));
