@@ -9,10 +9,9 @@
 #include <map>
 #include <vector>
 
-uint batchSize = 100;
+uint batchSize = 200;
 bool debugEnabled = false;
 typedef uint16_t scaledType;
-uint scaled_weights_bits = 4;
 
 
 /* 
@@ -32,20 +31,20 @@ volatile struct sharedMemory * const shared_ptr = (struct sharedMemory *)0x30040
 NeuralNetwork<NN_HIDDEN_NEURONS>* network = new NeuralNetwork<NN_HIDDEN_NEURONS>();
 uint16_t num_epochs = 0;
 
-void getScaleRange(float &a, float &b) {
+void getScaleRange(float &a, float &b, uint8_t scaled_weights_bits) {
     a = 0;
     b = std::pow(2, scaled_weights_bits)-1;
 } 
 
-scaledType scaleWeight(float min_w, float max_w, float weight) {
+scaledType scaleWeight(float min_w, float max_w, float weight, uint8_t scaled_weights_bits) {
     float a, b;
-    getScaleRange(a, b);
+    getScaleRange(a, b, scaled_weights_bits);
     return round(a + ( (weight-min_w)*(b-a) / (max_w-min_w) ));
 }
 
-float deScaleWeight(float min_w, float max_w, scaledType weight) {
+float deScaleWeight(float min_w, float max_w, scaledType weight, uint8_t scaled_weights_bits) {
     float a, b;
-    getScaleRange(a, b);
+    getScaleRange(a, b, scaled_weights_bits);
     return min_w + ( (weight-a)*(max_w-min_w) / (b-a) );
 }
 
@@ -72,13 +71,13 @@ std::vector<float> getRawWeights(uint16_t batchNum, float &min_w, float &max_w) 
   return weights;
 }
 
-std::vector<scaledType> getScaledWeights(uint16_t batchNum, float &min_w, float &max_w) {
+std::vector<scaledType> getScaledWeights(uint16_t batchNum, float &min_w, float &max_w, uint8_t scaled_weights_bits) {
   if (debugEnabled) Serial.println("Getting weights values for batch " + String(batchNum));
   std::vector<float> raw_weights = getRawWeights(batchNum, min_w, max_w);
 
   std::vector<scaledType> weights;
   for(uint i = 0; i < raw_weights.size(); i++) {
-    scaledType scaledWeight = scaleWeight(min_w, max_w, raw_weights[i]);
+    scaledType scaledWeight = scaleWeight(min_w, max_w, raw_weights[i], scaled_weights_bits);
     weights.push_back(scaledWeight);
   }
 
@@ -185,7 +184,7 @@ int getModemMessage(byte*& bytesPtr, uint16_t &recipient) {
     if (Serial1.available()) {
       char command = Serial1.read();
       if (command != 'r') {
-        Serial.println("Unknown command received " + String(command));
+        Serial.println("Unknown command received: " + String(command));
         while(true) {
           Serial.print(Serial1.read());
         }
@@ -288,6 +287,8 @@ std::vector<float> requestWeights(uint16_t node, int batchNum) {
   float min_w, max_w;
   memcpy(&min_w, &response[0], sizeof(float));
   memcpy(&max_w, &response[sizeof(float)], sizeof(float));
+  uint8_t scaled_weights_bits;
+  memcpy(&scaled_weights_bits, &response[sizeof(float) * 2], sizeof(uint8_t));
 
   if (debugEnabled) Serial.println("Received min weight: " + String(min_w) + " Received max weight: " + String(max_w));
 
@@ -302,7 +303,7 @@ std::vector<float> requestWeights(uint16_t node, int batchNum) {
       currentResponseBit++;
     }
     if (debugEnabled && byte == 0) Serial.println("Received first weight: " + String(weight));
-    weights.push_back(deScaleWeight(min_w, max_w, weight));
+    weights.push_back(deScaleWeight(min_w, max_w, weight, scaled_weights_bits));
     weight = 0;
   }
 
@@ -384,10 +385,11 @@ void doFL() {
 void sendWeights(uint16_t recipient, uint16_t batchNum) {
   if (debugEnabled) Serial.println("Received weights request for batch " + String(batchNum) + " from " + String(recipient));
   float min_w, max_w;
-  std::vector<scaledType> weights = getScaledWeights(batchNum, min_w, max_w);
+  uint8_t scaled_weights_bits = 4;
+  std::vector<scaledType> weights = getScaledWeights(batchNum, min_w, max_w, scaled_weights_bits);
   if (debugEnabled) Serial.println("Received " + String(weights.size()) + " weights from getScaledWeights, batch size is: " + String(weights.size()));
 
-  uint num_bytes = sizeof(float) * 2 + std::ceil((weights.size() * scaled_weights_bits / 8.0));
+  uint num_bytes = sizeof(float) * 2 + sizeof(uint8_t) + std::ceil((weights.size() * scaled_weights_bits / 8.0));
 
   if (debugEnabled) Serial.println("Preparing " + String(num_bytes) + " to send");
 
@@ -395,6 +397,7 @@ void sendWeights(uint16_t recipient, uint16_t batchNum) {
   byte data[num_bytes] = {}; // Initialized to zeros
   memcpy(&data, &min_w, sizeof(float));
   memcpy(&data[sizeof(float)], &max_w, sizeof(float));
+  memcpy(&data[sizeof(float) * 2], &scaled_weights_bits, sizeof(float));
 
   if (debugEnabled) Serial.println("Min weight: " + String(min_w) + " Max weight: " + String(max_w));
 

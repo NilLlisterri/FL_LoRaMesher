@@ -39,7 +39,7 @@ class NodeManager:
 
         self.enableTest = True
         self.enablePlot = False
-        self.batchSize = 2             # Must be divisble by the amount of keywords
+        self.batchSize = 20             # Must be divisble by the amount of keywords
 
         self.keywords_buttons = {
             "montserrat": 1,
@@ -49,7 +49,7 @@ class NodeManager:
         }
 
         self.experiment = 'iid'        # 'iid', 'no-iid', 'train-test', None
-        self.debug = True
+        self.debug = False
         self.pauseListen = False       # So there are no threads reading the serial input at the same time
 
         self.graph = []
@@ -196,7 +196,7 @@ class NodeManager:
             error, success = self.sendSample(device, f"{self.samples_folder}/{filename}", num_button, deviceIndex, True)
             errors_queue.put(error)
             successes_queue.put(success)
-        
+
         test_accuracy = sum(successes_queue.queue)/len(successes_queue.queue)
         test_error = sum(errors_queue.queue)/len(errors_queue.queue)
         if self.debug: print(f"[{device.port}] Testing accuracy: {test_accuracy}")
@@ -209,7 +209,7 @@ class NodeManager:
         if self.debug: print(f'[{device.port}] Outputs: {outputs}')
         predicted_button = outputs.index(max(outputs))+1
         if self.debug: print(f'[{device.port}] Predicted button: {predicted_button}')
-        error = device.readline().decode()
+        error = float(device.readline().decode()[:-2])
         if self.debug: print(f"[{device.port}] Error: {error}")
 
         ne = device.readline()
@@ -312,11 +312,11 @@ class NodeManager:
 
         line = ''
         while True:
-            if self.devices[1].in_waiting: print(f"[{self.devices[1].port}] {self.devices[1].readline().decode()}")
+            if self.devices[1].in_waiting: print(f"[{self.devices[1].port}] {self.devices[1].readline()}")
             if device.in_waiting:
-                line = device.readline().decode()
+                line = device.readline()
                 print(f"[{device.port}] {line}")
-                if ("FL_DONE" in line):
+                if (b"FL_DONE" in line):
                     break
         
 
@@ -331,7 +331,7 @@ class NodeManager:
         train_ini_time = time.time()
         num_batches = int(self.training_epochs/self.batchSize)
 
-        # if self.enableTest: self.sendTestAllDevices() # Initial accuracy
+        if self.enableTest: self.sendTestAllDevices() # Initial accuracy
 
         # Train the device
         for batch in range(num_batches):
@@ -358,6 +358,6 @@ class NodeManager:
         # self.sendTestAllDevices() # Final accuracy
 
         self.plotAccuracies()
-        figname = f"plots/{len(self.devices)}-{HIDDEN_NODES}.png"
+        figname = f"plots/{len(self.devices)}d-{HIDDEN_NODES}hn-{self.batchSize}bs.png"
         plt.savefig(figname, format='png')
         print(f"Generated {figname}")
