@@ -148,22 +148,23 @@ void trainWithSerialSample() {
 
 volatile bool lock_modem = false;
 
+void waitForModemBytes(uint count, String waitingMessage) {
+  while (Serial1.available() < count) {
+      if (debugEnabled) Serial.println(waitingMessage);
+      delay(100);
+    }
+}
+
 std::vector<uint16_t> getRoutingTable() {
   lock_modem = true;
   std::vector<uint16_t> nodes;
   if (debugEnabled) Serial.println("Getting routing table");
   Serial1.write('r'); // Send command
-  while (!Serial1.available()) {
-    if (debugEnabled) Serial.println("Waiting for nodes count");
-    delay(500);
-  }
+  waitForModemBytes(1, "Waiting for nodes count");
   uint8_t count = Serial1.read();
   if (debugEnabled) Serial.println("Number of nodes: " + String(count));
   for (int i = 0; i < count; i++) {
-    while (Serial1.available() < 2) {
-      if (debugEnabled) Serial.println("Waiting for node address");
-      delay(500);
-    }
+    waitForModemBytes(2, "Waiting for node address");
     uint16_t node;
     Serial1.readBytes((char*)&node, 2);
     nodes.push_back(node);
@@ -186,39 +187,26 @@ int getModemMessage(byte*& bytesPtr, uint16_t &recipient) {
       if (command != 'r') {
         Serial.println("Unknown command received: " + String(command));
         while(true) {
-          Serial.print(Serial1.read());
+          if (Serial.available()) Serial.println(Serial1.read());
         }
       }
       if (debugEnabled) Serial.println("Received command: " + String(command));
-      while (Serial1.available() < 2) {
-        if (debugEnabled) Serial.println("Waiting for recipient");
-        delay(100);
-      }
 
       // Read from
-      byte addressBytes[2];
-      Serial1.readBytes(addressBytes, 2);
-      memcpy(&recipient, addressBytes, sizeof(uint16_t));
-
-      while (Serial1.available() < 2) {
-        if (debugEnabled) Serial.println("Waiting for bytes count");
-        delay(100);
-      }
+      waitForModemBytes(2, "Waiting for recipient");
+      Serial1.readBytes((byte*) &recipient, 2);
+      if (debugEnabled) Serial.println("Destination address: " + String(recipient));
 
       // Read message bytes count
-      byte countBytes[2];
-      uint16_t bytesCount;
-      Serial1.readBytes(countBytes, 2);
-      memcpy(&bytesCount, countBytes, sizeof(uint16_t));
+      waitForModemBytes(2, "Waiting for bytes count");
+      uint16_t bytesCount = 0;
+      Serial1.readBytes((uint8_t*) &bytesCount, 2);
 
       if (debugEnabled) Serial.println("Bytes count: " + String(bytesCount));
       bytesPtr = (byte*) malloc(bytesCount);
       if (debugEnabled) Serial.println("Receiving bytes");
       for (int i = 0; i < bytesCount; i++) {
-        while (!Serial1.available()) {
-          if (debugEnabled) Serial.println("Waiting for byte " + String(i+1)); 
-          delay(100); 
-        }
+        waitForModemBytes(1, "Waiting for byte " + String(i+1));
         bytesPtr[i] = Serial1.read();
       }
       if (debugEnabled) Serial.println("Modem received " + String(bytesCount) + " bytes");
@@ -237,11 +225,42 @@ int sendModemMessage(uint16_t recipient, uint16_t size, byte* bytes, bool expect
   while (!received) {
     if (debugEnabled) Serial.println("Attempting to send message");
     Serial1.write('s'); // Send command
-    Serial1.write(static_cast<byte*>(static_cast<void*>(&recipient)), 2);
-    Serial1.write(static_cast<byte*>(static_cast<void*>(&size)), 2);
+    
+    Serial1.write((uint8_t*) &recipient, 2);
+    Serial1.write((uint8_t*) &size, 2);
+
     for (uint16_t i = 0; i < size; i++) {
       Serial1.write(bytes[i]);
+      while(!Serial1.available()) {
+        digitalWrite(LEDR, LOW);
+        delay(50);
+        digitalWrite(LEDR, HIGH);
+      }
+      byte confirmation = Serial1.read();
+      if (confirmation != bytes[i]) {
+        digitalWrite(LEDR, LOW);
+        while(true) {
+          Serial.println("Sent byte #" + String(i) + " (" + String(bytes[i]) + ") to modem, confirmed " + String(confirmation));
+          while (Serial1.available()) {
+            Serial.print((char) Serial1.read());
+            Serial.println();
+          }
+          delay(3000);
+        }
+      }
     }
+
+    waitForModemBytes(2, "Waiting for message received confirmation");
+    uint16_t count_confirmation;
+    Serial1.readBytes((byte*) &count_confirmation, 2);
+    if (count_confirmation != size) {
+      digitalWrite(LEDR, LOW);
+      while(true) {
+        Serial.println("Sent " + String(size) + " bytes to modem, confirmed " + String(count_confirmation));
+        delay(1000);
+      }
+    }
+
     if (expectResponse) {
       uint16_t ackSender; // TODO: Verify the sender is the wanted
       int responseCount = getModemMessage(response, ackSender);
