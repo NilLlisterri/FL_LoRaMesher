@@ -39,7 +39,7 @@ class NodeManager:
 
         self.enableTest = True
         self.enablePlot = False
-        self.batchSize = 20             # Must be divisble by the amount of keywords
+        self.batchSize = 40             # Must be divisble by the amount of keywords
 
         self.keywords_buttons = {
             "montserrat": 1,
@@ -281,9 +281,11 @@ class NodeManager:
         plt.ylim(bottom=0, top=1)
         plt.xlim(left=0)
         plt.autoscale(axis='x')
+        colors = ['r', 'g', 'b', 'y']
+        markers = ['-', '--', ':', '-.']
         for device_index, device in enumerate(self.devices):
-            #plt.plot(training_accuracy_map[device_index], label=f"Device {device_index}")
-            plt.plot(self.test_accuracies_map[device_index], label=f"Device {device_index}")
+            plt.plot(self.test_accuracies_map[device_index], colors[device_index] + markers[device_index], label=f"Device {device.port}", marker='o')
+        plt.legend()
 
     def doFL(self):
         device = self.devices[0]
@@ -355,7 +357,7 @@ class NodeManager:
 
         if self.debug: print(f'[MAIN] Training completed in {time.time() - train_ini_time}s')
 
-        # self.sendTestAllDevices() # Final accuracy
+        self.sendTestAllDevices() # Final accuracy
 
         self.plotAccuracies()
         figname = f"plots/{len(self.devices)}d-{HIDDEN_NODES}hn-{self.batchSize}bs.png"

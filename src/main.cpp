@@ -231,6 +231,7 @@ int sendModemMessage(uint16_t recipient, uint16_t size, byte* bytes, bool expect
 
     for (uint16_t i = 0; i < size; i++) {
       Serial1.write(bytes[i]);
+      delay(10);
       while(!Serial1.available()) {
         digitalWrite(LEDR, LOW);
         delay(50);
@@ -404,7 +405,7 @@ void doFL() {
 void sendWeights(uint16_t recipient, uint16_t batchNum) {
   if (debugEnabled) Serial.println("Received weights request for batch " + String(batchNum) + " from " + String(recipient));
   float min_w, max_w;
-  uint8_t scaled_weights_bits = 4;
+  uint8_t scaled_weights_bits = 6;
   std::vector<scaledType> weights = getScaledWeights(batchNum, min_w, max_w, scaled_weights_bits);
   if (debugEnabled) Serial.println("Received " + String(weights.size()) + " weights from getScaledWeights, batch size is: " + String(weights.size()));
 
