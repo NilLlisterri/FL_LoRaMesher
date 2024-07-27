@@ -357,8 +357,6 @@ class NodeManager:
 
         if self.debug: print(f'[MAIN] Training completed in {time.time() - train_ini_time}s')
 
-        self.sendTestAllDevices() # Final accuracy
-
         self.plotAccuracies()
         figname = f"plots/{len(self.devices)}d-{HIDDEN_NODES}hn-{self.batchSize}bs.png"
         plt.savefig(figname, format='png')
