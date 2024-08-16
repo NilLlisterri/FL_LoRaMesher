@@ -63,7 +63,7 @@ class NodeManager:
         for i, word in enumerate(self.words):
             file_list = os.listdir(f"{self.samples_folder}/{word}")
             if (len(file_list) < train_samples_split + test_samples_split): 
-                sys.exit(f"[MAIN] Not enough samples for keyword {word}")
+                sys.exit(f"[SERVER] Not enough samples for keyword {word}")
             random.shuffle(file_list)
             files.append(list(map(lambda f: f"{word}/{f}", file_list[0:train_samples_split])))
             test_files.append(list(map(lambda f: f"{word}/{f}", file_list[train_samples_split:(train_samples_split+test_samples_split)])))
@@ -72,9 +72,9 @@ class NodeManager:
         self.test_keywords = list(sum(zip(*test_files), ()))
 
         if (self.training_epochs > len(self.keywords) / len(self.devices)):
-            sys.exit(f"[MAIN] Not enough training samples for {self.training_epochs} training epochs on {len(self.devices)} devices")
+            sys.exit(f"[SERVER] Not enough training samples for {self.training_epochs} training epochs on {len(self.devices)} devices")
         if (self.testing_epochs > len(self.test_keywords)):
-            sys.exit(f"[MAIN] Not enough testing samples for {self.testing_epochs} testing epochs")
+            sys.exit(f"[SERVER] Not enough testing samples for {self.testing_epochs} testing epochs")
         
         self.test_accuracies_map = {}
         self.test_errors_map = {}
@@ -139,7 +139,9 @@ class NodeManager:
 
         if self.debug: print(f"[{device.port}] Sending samples of batch {batch_index + 1}, from {start+1} to {end}")
 
-        for i in tqdm(range(start, end), desc=f"Sending batch {batch_index}"):
+        # for i in tqdm(range(start, end), desc=f"[{device.port}] Sending train batch {batch_index + 1}"):
+        print(f"[{device.port}] Sending train batch {batch_index + 1}...")
+        for i in range(start, end):
             filename = self.keywords[i % len(self.keywords)]
             keyword = filename.split("/")[0]
             num_button = self.keywords_buttons[keyword]
@@ -187,8 +189,9 @@ class NodeManager:
         errors_queue = Queue()
         successes_queue = Queue()
 
-        if self.debug: print(f"[{device.port}] Sending {self.testing_epochs} test samples")
-        for filename in tqdm(self.test_keywords[:self.testing_epochs], desc="Sending test samples"):
+        # for filename in tqdm(self.test_keywords[:self.testing_epochs], desc=f"[{device.port}] Sending test samples"):
+        print(f"[{device.port}] Sending test samples...")
+        for filename in self.test_keywords[:self.testing_epochs]:
             if self.debug: print(f"[{device.port}] Sending test sample {self.testing_epochs}")
             keyword = filename.split("/")[0]
             num_button = self.keywords_buttons[keyword]
@@ -314,12 +317,15 @@ class NodeManager:
 
         line = ''
         while True:
-            if self.devices[1].in_waiting: print(f"[{self.devices[1].port}] {self.devices[1].readline()}")
+            for remoteDevice in self.devices[1:]:
+                if remoteDevice.in_waiting: print(f"[{remoteDevice.port}] {remoteDevice.readline()}")
+            
             if device.in_waiting:
                 line = device.readline()
-                print(f"[{device.port}] {line}")
                 if (b"FL_DONE" in line):
+                    print(f"[SERVER] Federated learning round completed")
                     break
+                else: print(f"[{device.port}] {line.decode()[:-2]}")
         
 
     def startExperiment(self):
@@ -338,7 +344,7 @@ class NodeManager:
         # Train the device
         for batch in range(num_batches):
             batch_ini_time = time.time()
-            if self.debug: print(f"[MAIN] Sending batch {batch + 1}/{num_batches}")
+            if self.debug: print(f"[SERVER] Sending samples batch {batch + 1}/{num_batches}")
             threads = []
             for deviceIndex, device in enumerate(self.devices):
                 thread = threading.Thread(target=self.sendSamples, args=(device, deviceIndex, batch))
@@ -346,16 +352,17 @@ class NodeManager:
                 thread.start()
                 threads.append(thread)
             for thread in threads: thread.join() # Wait for all the threads to end
-            if self.debug: print(f'[MAIN] Batch time: {round(time.time() - batch_ini_time, 3)}s')
+            if self.debug: print(f'[SERVER] Batch time: {round(time.time() - batch_ini_time, 3)}s')
             
             time.sleep(1)
 
+            print(f"[SERVER] Triggering FL round on device {self.devices[0].port}")
             self.doFL()
 
             if self.enableTest:
                 self.sendTestAllDevices() # To calculate the accuracy on every epoch
 
-        if self.debug: print(f'[MAIN] Training completed in {time.time() - train_ini_time}s')
+        if self.debug: print(f'[SERVER] Training completed in {time.time() - train_ini_time}s')
 
         self.plotAccuracies()
         figname = f"plots/{len(self.devices)}d-{HIDDEN_NODES}hn-{self.batchSize}bs.png"

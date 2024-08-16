@@ -381,7 +381,7 @@ void doFL() {
   Serial.println(batches);
 
   for (uint16_t batchNum = 0; batchNum < batches; batchNum++) {
-    Serial.println("Requesting batch " + String(batchNum) + "/" + String(batches));
+    Serial.println("Requesting weights batch " + String(batchNum + 1) + "/" + String(batches));
     std::vector<float> weights = requestWeights(best_node, batchNum);
     for(uint i = 0; i < weights.size(); i++) {
       uint weightPos = (batchNum * batchSize) + i;
@@ -405,7 +405,7 @@ void doFL() {
 void sendWeights(uint16_t recipient, uint16_t batchNum) {
   if (debugEnabled) Serial.println("Received weights request for batch " + String(batchNum) + " from " + String(recipient));
   float min_w, max_w;
-  uint8_t scaled_weights_bits = 6;
+  uint8_t scaled_weights_bits = 12;
   std::vector<scaledType> weights = getScaledWeights(batchNum, min_w, max_w, scaled_weights_bits);
   if (debugEnabled) Serial.println("Received " + String(weights.size()) + " weights from getScaledWeights, batch size is: " + String(weights.size()));
 
