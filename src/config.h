@@ -1,1 +1,1 @@
-#define NN_HIDDEN_NEURONS 10
+#define NN_HIDDEN_NEURONS 2

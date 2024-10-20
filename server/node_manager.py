@@ -290,8 +290,7 @@ class NodeManager:
             plt.plot(self.test_accuracies_map[device_index], colors[device_index] + markers[device_index], label=f"Device {device.port}", marker='o')
         plt.legend()
 
-    def doFL(self):
-        device = self.devices[0]
+    def doFL(self, device):
         device.write(b'>')
 
         fl_start_confirmation = device.readline().decode()
@@ -357,7 +356,7 @@ class NodeManager:
             time.sleep(1)
 
             print(f"[SERVER] Triggering FL round on device {self.devices[0].port}")
-            self.doFL()
+            self.doFL(self.devices[0])
 
             if self.enableTest:
                 self.sendTestAllDevices() # To calculate the accuracy on every epoch

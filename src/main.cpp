@@ -435,7 +435,7 @@ void sendWeights(uint16_t recipient, uint16_t batchNum) {
   sendModemMessage(recipient, num_bytes, data);
 }
 
-void sendNewSamplesCount(uint16_t recipient) {
+void sendMetrics(uint16_t recipient) {
   if (debugEnabled) Serial.println("Received samples count request, returning " + String(num_epochs));
   byte data[2];
   std::memcpy(&data, &num_epochs, sizeof(uint16_t));
@@ -495,7 +495,7 @@ void loop() {
       std::memcpy(&batchNum, &bytes[1], sizeof(int16_t));
       sendWeights(recipient, batchNum);
     } else if (bytesCount == 1 && (char) bytes[0] == 'n') { // Amount of new samples request
-      sendNewSamplesCount(recipient);
+      sendMetrics(recipient);
     }
   }
 }
