@@ -32,14 +32,14 @@ class NodeManager:
 
         # Experiment sizes
         self.training_epochs = 160      # Amount of training epochs. Can't be more than kws * train_samples_split
-        self.testing_epochs = 20        # Amount of test samples of each keyword. Can't be more than kws * test_samples_split
+        self.testing_epochs = 0         # Amount of test samples of each keyword. Can't be more than kws * test_samples_split
 
         self.momentum = 0.9
         self.learningRate= 0.05
 
         self.enableTest = True
         self.enablePlot = False
-        self.batchSize = 40             # Must be divisble by the amount of keywords
+        self.batchSize = 8             # Must be divisble by the amount of keywords
 
         self.keywords_buttons = {
             "montserrat": 1,
@@ -139,9 +139,8 @@ class NodeManager:
 
         if self.debug: print(f"[{device.port}] Sending samples of batch {batch_index + 1}, from {start+1} to {end}")
 
-        # for i in tqdm(range(start, end), desc=f"[{device.port}] Sending train batch {batch_index + 1}"):
-        print(f"[{device.port}] Sending train batch {batch_index + 1}...")
-        for i in range(start, end):
+        if self.debug: print(f"[{device.port}] Sending train batch {batch_index + 1}...")
+        for i in tqdm(range(start, end), desc=f"[{device.port}] Sending train batch {batch_index + 1}", ncols=0 if self.debug else None):
             filename = self.keywords[i % len(self.keywords)]
             keyword = filename.split("/")[0]
             num_button = self.keywords_buttons[keyword]
@@ -188,11 +187,10 @@ class NodeManager:
     def sendTestSamples(self, device, deviceIndex):
         errors_queue = Queue()
         successes_queue = Queue()
-
-        # for filename in tqdm(self.test_keywords[:self.testing_epochs], desc=f"[{device.port}] Sending test samples"):
-        print(f"[{device.port}] Sending test samples...")
-        for filename in self.test_keywords[:self.testing_epochs]:
-            if self.debug: print(f"[{device.port}] Sending test sample {self.testing_epochs}")
+        
+        if self.debug: print(f"[{device.port}] Sending test sample {self.testing_epochs}")
+        for filename, index in tqdm(self.test_keywords[:self.testing_epochs], desc=f"[{device.port}] Sending test samples", ncols=0 if self.debug else None):
+            if self.debug: print(f"[{device.port}] Sending test sample {index}")
             keyword = filename.split("/")[0]
             num_button = self.keywords_buttons[keyword]
             
@@ -272,6 +270,7 @@ class NodeManager:
             time.sleep(0.4)
     
     def sendTestAllDevices(self):
+        if (self.testing_epochs == 0): return
         threads = []
         for deviceIndex, device in enumerate(self.devices):
             thread = threading.Thread(target=self.sendTestSamples, args=(device, deviceIndex))
@@ -291,6 +290,7 @@ class NodeManager:
         plt.legend()
 
     def doFL(self, device):
+        print(f"[SERVER] Triggering FL round on device {device.port}")
         device.write(b'>')
 
         fl_start_confirmation = device.readline().decode()
@@ -338,7 +338,7 @@ class NodeManager:
         train_ini_time = time.time()
         num_batches = int(self.training_epochs/self.batchSize)
 
-        if self.enableTest: self.sendTestAllDevices() # Initial accuracy
+        # if self.enableTest: self.sendTestAllDevices() # Initial accuracy
 
         # Train the device
         for batch in range(num_batches):
@@ -355,11 +355,13 @@ class NodeManager:
             
             time.sleep(1)
 
-            print(f"[SERVER] Triggering FL round on device {self.devices[0].port}")
+            if (batch == 0): sys.stdout.write("\033[K") # print("\r\n")
             self.doFL(self.devices[0])
 
             if self.enableTest:
                 self.sendTestAllDevices() # To calculate the accuracy on every epoch
+            
+            time.sleep(2)
 
         if self.debug: print(f'[SERVER] Training completed in {time.time() - train_ini_time}s')
 

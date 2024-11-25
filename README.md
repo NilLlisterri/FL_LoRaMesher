@@ -20,13 +20,11 @@ Constants, as the size of the NN, are found in the `server/constants.py` file. W
 In the experiments, samples can be sent to all of the nodes in parallel, FL rounds can be triggered on specific nodes and metrics and plots can be generated.
 
 ### Important methods
-
 * `server/node_manager.py`
     * `startExperiment`: The main method that will orchestrate the experiment.
     * `sendSamples`: Send a specific amount of training samples to the nodes.
     * `sendTestAllDevices`: Send the configured amount of test samples to all devices to obtain the accuracy of the model.
     * `doFL`: Trigger a FL round in a node. The node will query all the other nodes and perform FL with the best candidate.
-
 * `src/main.cpp`
     * `sendModemMessage`: Send a message to another node, through the modem connected via serial.
     * `getModemMessage`: Expect a response to a message from another node, for example to verify the successfull delivery of a previous message.
