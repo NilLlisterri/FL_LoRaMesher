@@ -13,6 +13,15 @@ uint batchSize = 200;
 bool debugEnabled = false;
 typedef uint16_t scaledType;
 
+struct Metric {
+  uint8_t hops;
+  uint16_t num_epochs;
+};
+
+struct Node {
+  uint16_t address;
+  uint8_t hops;
+};
 
 /* 
   This variable will hold the recorded audio.
@@ -155,9 +164,9 @@ void waitForModemBytes(uint count, String waitingMessage) {
     }
 }
 
-std::vector<uint16_t> getRoutingTable() {
+std::vector<Node> getRoutingTable() {
   lock_modem = true;
-  std::vector<uint16_t> nodes;
+  std::vector<Node> nodes;
   if (debugEnabled) Serial.println("Getting routing table");
   Serial1.write('r'); // Send command
   waitForModemBytes(1, "Waiting for nodes count");
@@ -165,10 +174,15 @@ std::vector<uint16_t> getRoutingTable() {
   if (debugEnabled) Serial.println("Number of nodes: " + String(count));
   for (int i = 0; i < count; i++) {
     waitForModemBytes(2, "Waiting for node address");
-    uint16_t node;
-    Serial1.readBytes((char*)&node, 2);
+    uint16_t address;
+    Serial1.readBytes((char*)&address, 2);
+    uint8_t hops;
+    Serial1.readBytes((char*)&hops, 1);
+    Node node;
+    node.address = address;
+    node.hops = hops;
     nodes.push_back(node);
-    if (debugEnabled) Serial.println("Node " + String(i + 1) + ": " + String(nodes[i]));
+    if (debugEnabled) Serial.println("Node " + String(i + 1) + ": " + String(nodes[i].address));
   }
   lock_modem = false;
   return nodes;
@@ -276,17 +290,20 @@ int sendModemMessage(uint16_t recipient, uint16_t size, byte* bytes, bool expect
 }
 
 
-std::map<uint16_t, uint16_t> getNodesEpochs() {
-  std::map<uint16_t, uint16_t> res;
-  std::vector<uint16_t> nodes = getRoutingTable();
+std::map<uint16_t, Metric> getNodeMetrics() {
+  std::map<uint16_t, Metric> res;
+  std::vector<Node> nodes = getRoutingTable();
   lock_modem = true;
   for (uint i = 0; i < nodes.size(); i++) {
     byte data[1] = {'n'};
     byte* response;
-    int responseLength = sendModemMessage(nodes[i], 1, data, true, response);
+    int responseLength = sendModemMessage(nodes[i].address, 1, data, true, response);
     uint16_t amount;
     std::memcpy(&amount, response, sizeof(uint16_t));
-    res[nodes[i]] = amount;
+    Metric metric;
+    metric.num_epochs = amount;
+    metric.hops = nodes[i].hops;
+    res[nodes[i].address] = metric;
   }
   lock_modem = false;
   return res;
@@ -334,11 +351,11 @@ std::vector<float> requestWeights(uint16_t node, int batchNum) {
 // Map containing the addres of the node and the samples it captured until the last FL
 std::map<uint16_t, uint16_t> samples_amt;
 
-void doFL() {
+void doFL(uint16_t target) {
   digitalWrite(LEDB, LOW);
   Serial.println("Starting FL");
 
-  std::vector<uint16_t> nodes = getRoutingTable();
+  std::vector<Node> nodes = getRoutingTable();
   Serial.println(nodes.size());
   if (!nodes.size()) {
     digitalWrite(LEDB, HIGH);
@@ -349,13 +366,13 @@ void doFL() {
   uint16_t max_epochs_since_last_fl = 0;
   uint16_t max_epochs = 0;
 
-  std::map<uint16_t, uint16_t> node_epochs = getNodesEpochs();
-  for (auto const& [node_addr, amount] : node_epochs) {
-      uint16_t amount_since_last_fl = amount - samples_amt[node_addr];
+  std::map<uint16_t, Metric> node_metrics = getNodeMetrics();
+  for (auto const& [node_addr, metric] : node_metrics) {
+      uint16_t amount_since_last_fl = metric.num_epochs - samples_amt[node_addr];
       if (amount_since_last_fl >= max_epochs_since_last_fl) {
         best_node = node_addr;
         max_epochs_since_last_fl = amount_since_last_fl;
-        max_epochs = amount;
+        max_epochs = metric.num_epochs;
       }
   }
 
@@ -363,6 +380,10 @@ void doFL() {
   if (max_epochs_since_last_fl == 0) {
     digitalWrite(LEDB, HIGH);
     return;
+  }
+
+  if (target != 0) {
+    best_node = target;
   }
 
   samples_amt[best_node] = max_epochs;
@@ -381,7 +402,7 @@ void doFL() {
   Serial.println(batches);
 
   for (uint16_t batchNum = 0; batchNum < batches; batchNum++) {
-    Serial.println("Requesting weights batch " + String(batchNum + 1) + "/" + String(batches));
+    Serial.println("Requesting weights batch " + String(batchNum + 1) + "/" + String(batches) + " from " + best_node);
     std::vector<float> weights = requestWeights(best_node, batchNum);
     for(uint i = 0; i < weights.size(); i++) {
       uint weightPos = (batchNum * batchSize) + i;
@@ -463,15 +484,17 @@ void loop() {
   if (Serial.available()) {
     int read = Serial.read();
     if (read == '>') {          // s -> FEDERATED LEARNING
-      doFL();
+      uint16_t target;
+      Serial.readBytes((byte*) &target, 2);
+      doFL(target);
     } else if (read == 't') {   // Train with a sample
       trainWithSerialSample();
     } else if (read == 'r') {
       Serial.println("Requesting routing table to M4");
-      std::vector<uint16_t> nodes = getRoutingTable();
+      std::vector<Node> nodes = getRoutingTable();
       Serial.println("Nodes: " + String(nodes.size()));
       for(uint i = 0; i < nodes.size(); i++) {
-        Serial.println(nodes[i]);
+        Serial.println(nodes[i].address);
       }
     } else if (read == 'z') {
       float* hidden_weights = network->getHiddenWeights();

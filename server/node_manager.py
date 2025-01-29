@@ -22,8 +22,9 @@ from constants import *
 
 class NodeManager:
 
-    def __init__(self, seed, devices):
+    def __init__(self, seed, devices, device_address_map):
         self.devices = devices
+        self.device_address_map = device_address_map
         self.seed = seed
 
         self.samples_folder = "./datasets/keywords"
@@ -289,9 +290,11 @@ class NodeManager:
             plt.plot(self.test_accuracies_map[device_index], colors[device_index] + markers[device_index], label=f"Device {device.port}", marker='o')
         plt.legend()
 
-    def doFL(self, device):
+    # Trigger a FL round on a device. A target device can be specified
+    def doFL(self, device, target_device = None):
         print(f"[SERVER] Triggering FL round on device {device.port}")
         device.write(b'>')
+        device.write(struct.pack('h', self.device_address_map[target_device.port] if target_device != None else 0))
 
         fl_start_confirmation = device.readline().decode()
         if self.debug: print(f"[{device.port}] Fl start confirmation: {fl_start_confirmation}")
@@ -356,7 +359,7 @@ class NodeManager:
             time.sleep(1)
 
             if (batch == 0): sys.stdout.write("\033[K") # print("\r\n")
-            self.doFL(self.devices[0])
+            self.doFL(self.devices[0], self.devices[1])
 
             if self.enableTest:
                 self.sendTestAllDevices() # To calculate the accuracy on every epoch

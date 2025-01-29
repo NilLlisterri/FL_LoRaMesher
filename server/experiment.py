@@ -12,15 +12,18 @@ random.seed(123)
 
 def main():
     devices = [
-        # serial.Serial("com9", SERIAL_BR, timeout=5),
-        # serial.Serial("com12", SERIAL_BR, timeout=5),
-        # serial.Serial("com14", SERIAL_BR, timeout=5)
         serial.Serial("com5", SERIAL_BR, timeout=5),
         serial.Serial("com7", SERIAL_BR, timeout=5),
         serial.Serial("com11", SERIAL_BR, timeout=5)
     ]
 
-    nodeManager = NodeManager(seed, devices)
+    device_address_map = {
+        "com5": 22240,
+        "com7": 2120,
+        "com11": 22652
+    }
+
+    nodeManager = NodeManager(seed, devices, device_address_map)
     nodeManager.startExperiment()
 
 if __name__ == "__main__":
