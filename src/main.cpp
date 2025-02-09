@@ -479,6 +479,12 @@ void setup() {
   network->initialize(0.6, 0.9);
 }
 
+float readSerialFloat() {
+  float val;
+  while (Serial.available() < 4) {}
+  Serial.readBytes((byte*) &val, 4);
+  return val;
+}
 
 void loop() {
   if (Serial.available()) {
@@ -490,7 +496,7 @@ void loop() {
     } else if (read == 't') {   // Train with a sample
       trainWithSerialSample();
     } else if (read == 'r') {
-      Serial.println("Requesting routing table to M4");
+      Serial.println("Requesting routing table");
       std::vector<Node> nodes = getRoutingTable();
       Serial.println("Nodes: " + String(nodes.size()));
       for(uint i = 0; i < nodes.size(); i++) {
@@ -503,6 +509,20 @@ void loop() {
       for (uint i = 0; i < network->getOutputWeightsAmt(); i++) {Serial.write(output_weights[i]);}
     } else if (read == 'x') {
       Serial.println(num_epochs);
+    } else if (read == 'i') {
+      Serial.println("Initializing device");
+
+      network->initialize(0.6, 0.9);
+
+      float* myHiddenWeights = network->getHiddenWeights();
+      float* myOutputWeights = network->getOutputWeights();
+      for (uint i = 0; i < network->getHiddenWeightsAmt(); i++) {
+        myHiddenWeights[i] = readSerialFloat();
+      }
+      for (uint i = 0; i < network->getOutputWeightsAmt(); i++) {
+        myOutputWeights[i] = readSerialFloat();
+      }
+      Serial.println("Model received");
     }
   }
   

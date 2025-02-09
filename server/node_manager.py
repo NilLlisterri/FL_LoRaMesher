@@ -98,35 +98,26 @@ class NodeManager:
     # Send the blank model to all the devices
     def initializeDevices(self):
         threads = []
-        for i, device in enumerate(self.devices):
-
+        for deviceIndex, device in enumerate(self.devices):
             hidden_layer = np.random.uniform(-0.5,0.5, SIZE_HIDDEN_LAYER).astype('float32')
             output_layer = np.random.uniform(-0.5, 0.5, SIZE_OUTPUT_LAYER).astype('float32')
-
             thread = threading.Thread(target=self.initDevice, args=(hidden_layer, output_layer, device))
             thread.daemon = True
             thread.start()
             threads.append(thread)
-        for thread in threads: thread.join() # Wait for all the threads to end
+        for thread in threads: thread.join()
 
     def initDevice(self, hidden_layer, output_layer, device):
+        if self.debug: print(f"[{device.port}] Initializing device...")
         device.reset_input_buffer()
-        device.write(b's')
+        device.write(b'i')
         initConfirmation = device.readline().decode()
         if self.debug: print(f"[{device.port}] Init device confirmation:", initConfirmation)
-        device.write(struct.pack('i', self.seed))
-        # print(f"Seed conf: {device.readline().decode()}")
-        if self.debug: print(f"[{device.port}] Sending blank model...")
 
-        device.write(struct.pack('f', self.learningRate))
-        device.write(struct.pack('f', self.momentum))
-
-        for i in trange(len(hidden_layer), desc="Sending hidden layer"):
-            res = device.read() # wait until confirmation of float received
+        for i in trange(SIZE_HIDDEN_LAYER, desc="Sending hidden layer"):
             device.write(struct.pack('f', hidden_layer[i]))
         
-        for i in trange(len(output_layer), desc="Sending output"):
-            res = device.read() # wait until confirmation of float received
+        for i in trange(SIZE_OUTPUT_LAYER, desc="Sending output"):
             device.write(struct.pack('f', output_layer[i]))
 
         if self.debug: print(f"[{device.port}] Model sent")
@@ -331,8 +322,11 @@ class NodeManager:
         
 
     def startExperiment(self):
+        self.bitsVsPrecisionExperiment()
+
+    def bitsVsPrecisionExperiment(self):
         # self.initializeDevices()
-    
+
         if self.enablePlot: # Start plotting thread
             thread = threading.Thread(target=self.plot, args=["MSE Evolution"])
             thread.daemon = True

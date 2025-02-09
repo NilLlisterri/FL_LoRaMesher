@@ -31,10 +31,12 @@ class NeuralNetwork {
 
             for (uint i = 0; i < getHiddenWeightsAmt(); ++i) {
                 HiddenWeights[i] = random(InitialWeightMin*100, InitialWeightMax*100)/100.f; // Random generates ints
+                ChangeHiddenWeights[i] = 0;
             }
 
             for (uint i = 0; i < getOutputWeightsAmt(); ++i) {
                 OutputWeights[i] = random(InitialWeightMin*100, InitialWeightMax*100)/100.f; // Random generates ints
+                ChangeOutputWeights[i] = 0;
             }
         }
 
