@@ -18,11 +18,12 @@ import sys
 from tqdm import tqdm
 from tqdm import trange
 from constants import *
+import serial
 
 
 class NodeManager:
 
-    def __init__(self, seed, devices, device_address_map):
+    def __init__(self, seed, devices: list[serial.Serial], device_address_map: map):
         self.devices = devices
         self.device_address_map = device_address_map
         self.seed = seed
@@ -40,7 +41,7 @@ class NodeManager:
 
         self.enableTest = True
         self.enablePlot = False
-        self.batchSize = 8             # Must be divisble by the amount of keywords
+        self.batchSize = 4             # Must be divisble by the amount of keywords
 
         self.keywords_buttons = {
             "montserrat": 1,
@@ -51,6 +52,7 @@ class NodeManager:
 
         self.experiment = 'iid'        # 'iid', 'no-iid', 'train-test', None
         self.debug = False
+        self.useSerialModemPassthrough = True
         self.pauseListen = False       # So there are no threads reading the serial input at the same time
 
         self.graph = []
@@ -96,7 +98,7 @@ class NodeManager:
             self.max_weights_map[deviceIndex] = []
 
     # Send the blank model to all the devices
-    def initializeDevices(self):
+    def initDevices(self):
         threads = []
         for deviceIndex, device in enumerate(self.devices):
             hidden_layer = np.random.uniform(-0.5,0.5, SIZE_HIDDEN_LAYER).astype('float32')
@@ -282,14 +284,22 @@ class NodeManager:
         plt.legend()
 
     # Trigger a FL round on a device. A target device can be specified
-    def doFL(self, device, target_device = None):
+    def doFL(self, device: serial.Serial, target_device: serial.Serial = None):
         print(f"[SERVER] Triggering FL round on device {device.port}")
         device.write(b'>')
-        device.write(struct.pack('h', self.device_address_map[target_device.port] if target_device != None else 0))
+        device.write(struct.pack('H', self.device_address_map[target_device.port] if target_device != None else 0))
 
         fl_start_confirmation = device.readline().decode()
         if self.debug: print(f"[{device.port}] Fl start confirmation: {fl_start_confirmation}")
+
+        # The device will request the routing table
+        if self.useSerialModemPassthrough: self.answerRoutingTable(device)
+        
         nodes_count = device.readline().decode()
+        
+        # The device will ask all the other devices for metrics
+        if self.useSerialModemPassthrough: self.relayModemMessage(device, True)
+        
         if self.debug: print(f"[{device.port}] Routing nodes count: {nodes_count}")
         if (nodes_count == "0\r\n"):
             print("No nodes found")
@@ -308,24 +318,104 @@ class NodeManager:
         numBatches = device.readline().decode()
         if self.debug: print(f"[{device.port}] Num batches: {numBatches}")
 
-        line = ''
-        while True:
-            for remoteDevice in self.devices[1:]:
-                if remoteDevice.in_waiting: print(f"[{remoteDevice.port}] {remoteDevice.readline()}")
+        if self.useSerialModemPassthrough: 
+            for i in trange(int(numBatches), desc="Transfering batch"):
+                batchRequestMessage = device.readline().decode()
+                if self.debug: print(f"[{device.port}] BatchRequestMessage: {batchRequestMessage}")
+                # The device will ask for the weight batches
+                self.relayModemMessage(device, True)
             
-            if device.in_waiting:
-                line = device.readline()
-                if (b"FL_DONE" in line):
-                    print(f"[SERVER] Federated learning round completed")
-                    break
-                else: print(f"[{device.port}] {line.decode()[:-2]}")
+            flDoneConfirmation = device.readline().decode()
+            if self.debug: print(f"[{device.port}] FL done confirmation: {flDoneConfirmation}")
+        else:
+            line = ''
+            while True:
+                for remoteDevice in self.devices[1:]:
+                    if remoteDevice.in_waiting: print(f"[{remoteDevice.port}] {remoteDevice.readline()}")
+                
+                if device.in_waiting:
+                    line = device.readline()
+                    if (b"FL_DONE" in line):
+                        print(f"[SERVER] Federated learning round completed")
+                        break
+                    else: print(f"[{device.port}] {line.decode()[:-2]}")
         
+
+    def answerRoutingTable(self, device: serial.Serial):
+        routingTableCmd = device.read()
+        if self.debug: print(f"[{device.port}] Received routing table command: {routingTableCmd}")
+
+        nodesCount = len(self.device_address_map) - 1
+        device.write(struct.pack('B', nodesCount))
+        if self.debug: print(f"[{device.port}] Sent nodes count: {nodesCount}")
+
+
+        for port in self.device_address_map:
+            if port == device.port: continue
+            
+            if self.debug: print(f"[{device.port}] Sending node: {self.device_address_map[port]}")
+            device.write(struct.pack('H', self.device_address_map[port])) # Address
+            device.write(struct.pack('B', 1)) # Hops
+
+    def relayModemMessage(self, device: serial.Serial, expectResponse: bool):
+        targetDevice = self.readAndSendMessage(device)
+
+        if expectResponse:
+            while not targetDevice.in_waiting:
+                i = 1
+                if self.debug and i % 10 == 0: print("Waiting for response from receiver device...")
+                time.sleep(0.01)
+                i = i + 1
+            self.readAndSendMessage(targetDevice, True)
+
+    def readAndSendMessage(self, device: serial.Serial, expectingMessage: bool = False) -> serial.Serial:
+        if self.debug: print(f"[{device.port}] Reading message...")
+
+        send_message_command = device.read()
+        if self.debug: print(f"[{device.port}] Send message command: {send_message_command}")
+        targetAddress = struct.unpack('H', device.read(2))[0]
+        if self.debug: print(f"[{device.port}] Send message targetAddress: {targetAddress}")
+        messageSize = struct.unpack('H', device.read(2))[0]
+        if self.debug: print(f"[{device.port}] Send message messageSize: {messageSize}")
+        message = []
+        for i in range(messageSize):
+            byte = device.read(1)
+            message.append(byte)
+            device.write(byte) # echo the same value (error detection)
+        device.write(struct.pack('H', messageSize)) # Confirm size
+
+        
+
+        # Message sending
+        targetDevicePort = [port for port, address in self.device_address_map.items() if address == targetAddress][0]
+        targetDevice = [device for device in self.devices if device.port == targetDevicePort][0]
+
+        if self.debug: print(f"[{targetDevice.port}] Sending message to target: {targetDevice.port}")
+
+        if not expectingMessage: 
+            targetDevice.write(b'm')
+            confirmation = targetDevice.readline().decode()
+            if self.debug: print(f"[{targetDevice.port}] Reading modem message confirmation: {confirmation}")
+
+        targetDevice.write(b'r') # Read command
+        # confirmation = targetDevice.read().decode()
+        # if self.debug: print(f"[{targetDevice.port}] Receive message confirmation: {confirmation}")
+
+        targetDevice.write(struct.pack('H', self.device_address_map[device.port])) # Sender address
+        targetDevice.write(struct.pack('H', messageSize)) # Message size
+        # Send the message
+        for i in range(messageSize):
+            targetDevice.write(message[i])
+        
+        if self.debug: print(f"[{targetDevice.port}] Message sent!")
+        
+        return targetDevice
 
     def startExperiment(self):
         self.bitsVsPrecisionExperiment()
 
     def bitsVsPrecisionExperiment(self):
-        # self.initializeDevices()
+        # self.initDevices()
 
         if self.enablePlot: # Start plotting thread
             thread = threading.Thread(target=self.plot, args=["MSE Evolution"])
@@ -350,7 +440,7 @@ class NodeManager:
             for thread in threads: thread.join() # Wait for all the threads to end
             if self.debug: print(f'[SERVER] Batch time: {round(time.time() - batch_ini_time, 3)}s')
             
-            time.sleep(1)
+            # time.sleep(1)
 
             if (batch == 0): sys.stdout.write("\033[K") # print("\r\n")
             self.doFL(self.devices[0], self.devices[1])
@@ -358,7 +448,7 @@ class NodeManager:
             if self.enableTest:
                 self.sendTestAllDevices() # To calculate the accuracy on every epoch
             
-            time.sleep(2)
+            # time.sleep(2)
 
         if self.debug: print(f'[SERVER] Training completed in {time.time() - train_ini_time}s')
 

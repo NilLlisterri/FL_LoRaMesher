@@ -9,8 +9,9 @@
 #include <map>
 #include <vector>
 
-uint batchSize = 200;
 bool debugEnabled = false;
+bool useSerialModemPassthrough = true; // Experimentation and debugging
+HardwareSerial& modem = useSerialModemPassthrough ? Serial : Serial1;
 typedef uint16_t scaledType;
 
 struct Metric {
@@ -63,8 +64,8 @@ std::vector<float> getRawWeights(uint16_t batchNum, float &min_w, float &max_w) 
   float* hidden_weights = network->getHiddenWeights();
   float* output_weights = network->getOutputWeights();
 
-  uint start = batchNum * batchSize;
-  for(uint i = start; i < start + batchSize; i++) {
+  uint start = batchNum * WEIGHTS_BATCH_SIZE;
+  for(uint i = start; i < start + WEIGHTS_BATCH_SIZE; i++) {
     float weight;
     if (i > network->getHiddenWeightsAmt() + network->getOutputWeightsAmt()) break;
     if (i < network->getHiddenWeightsAmt()) {
@@ -158,9 +159,11 @@ void trainWithSerialSample() {
 volatile bool lock_modem = false;
 
 void waitForModemBytes(uint count, String waitingMessage) {
-  while (Serial1.available() < count) {
-      if (debugEnabled) Serial.println(waitingMessage);
-      delay(100);
+  int i = 10;
+  while (modem.available() < count) {
+      if (debugEnabled && i % 10 == 0) Serial.println(waitingMessage);
+      delay(5);
+      i++;
     }
 }
 
@@ -168,16 +171,16 @@ std::vector<Node> getRoutingTable() {
   lock_modem = true;
   std::vector<Node> nodes;
   if (debugEnabled) Serial.println("Getting routing table");
-  Serial1.write('r'); // Send command
+  modem.write('r'); // Send command
   waitForModemBytes(1, "Waiting for nodes count");
-  uint8_t count = Serial1.read();
+  uint8_t count = modem.read();
   if (debugEnabled) Serial.println("Number of nodes: " + String(count));
   for (int i = 0; i < count; i++) {
     waitForModemBytes(2, "Waiting for node address");
     uint16_t address;
-    Serial1.readBytes((char*)&address, 2);
+    modem.readBytes((char*)&address, 2);
     uint8_t hops;
-    Serial1.readBytes((char*)&hops, 1);
+    modem.readBytes((char*)&hops, 1);
     Node node;
     node.address = address;
     node.hops = hops;
@@ -188,44 +191,44 @@ std::vector<Node> getRoutingTable() {
   return nodes;
 }
 
-int getModemMessage(byte*& bytesPtr, uint16_t &recipient) {
+int getModemMessage(byte*& bytesPtr, uint16_t &sender) {
   uint limit = millis() + 10000;
   while (millis() < limit) {
-    digitalWrite(LEDG, LOW);
-    delay(250);
-    digitalWrite(LEDG, HIGH);
-    delay(250);
-    if (debugEnabled) Serial.println("Waiting for modem message");
-    if (Serial1.available()) {
-      char command = Serial1.read();
+    if (modem.available()) {
+      char command = modem.read();
       if (command != 'r') {
         Serial.println("Unknown command received: " + String(command));
         while(true) {
-          if (Serial.available()) Serial.println(Serial1.read());
+          if (Serial.available()) Serial.println(modem.read());
         }
       }
-      if (debugEnabled) Serial.println("Received command: " + String(command));
 
       // Read from
-      waitForModemBytes(2, "Waiting for recipient");
-      Serial1.readBytes((byte*) &recipient, 2);
-      if (debugEnabled) Serial.println("Destination address: " + String(recipient));
-
+      waitForModemBytes(2, "Waiting for sender");
+      modem.readBytes((byte*) &sender, 2);
+      if (debugEnabled) Serial.println("Sender address: " + String(sender));
+      
       // Read message bytes count
       waitForModemBytes(2, "Waiting for bytes count");
       uint16_t bytesCount = 0;
-      Serial1.readBytes((uint8_t*) &bytesCount, 2);
-
+      modem.readBytes((uint8_t*) &bytesCount, 2);
       if (debugEnabled) Serial.println("Bytes count: " + String(bytesCount));
+
       bytesPtr = (byte*) malloc(bytesCount);
       if (debugEnabled) Serial.println("Receiving bytes");
       for (int i = 0; i < bytesCount; i++) {
         waitForModemBytes(1, "Waiting for byte " + String(i+1));
-        bytesPtr[i] = Serial1.read();
+        bytesPtr[i] = modem.read();
       }
       if (debugEnabled) Serial.println("Modem received " + String(bytesCount) + " bytes");
       return bytesCount;
     }
+
+    digitalWrite(LEDG, LOW);
+    delay(50);
+    digitalWrite(LEDG, HIGH);
+    delay(50);
+    if (debugEnabled) Serial.println("Waiting for modem message");
   }
 
   if (debugEnabled) Serial.println("Get modem message timeout");
@@ -236,28 +239,28 @@ int getModemMessage(byte*& bytesPtr, uint16_t &recipient) {
 byte* defpointer;
 int sendModemMessage(uint16_t recipient, uint16_t size, byte* bytes, bool expectResponse = false, byte*& response = defpointer) {
   bool received = false;
+
   while (!received) {
     if (debugEnabled) Serial.println("Attempting to send message");
-    Serial1.write('s'); // Send command
+    modem.write('s'); // Send command
     
-    Serial1.write((uint8_t*) &recipient, 2);
-    Serial1.write((uint8_t*) &size, 2);
+    modem.write((uint8_t*) &recipient, 2);
+    modem.write((uint8_t*) &size, 2);
 
     for (uint16_t i = 0; i < size; i++) {
-      Serial1.write(bytes[i]);
-      delay(10);
-      while(!Serial1.available()) {
-        digitalWrite(LEDR, LOW);
-        delay(50);
-        digitalWrite(LEDR, HIGH);
-      }
-      byte confirmation = Serial1.read();
+      modem.write(bytes[i]);
+      
+      digitalWrite(LEDR, LOW);
+      while(!modem.available()) {}
+      digitalWrite(LEDR, HIGH);
+
+      byte confirmation = modem.read();
       if (confirmation != bytes[i]) {
         digitalWrite(LEDR, LOW);
         while(true) {
           Serial.println("Sent byte #" + String(i) + " (" + String(bytes[i]) + ") to modem, confirmed " + String(confirmation));
-          while (Serial1.available()) {
-            Serial.print((char) Serial1.read());
+          while (modem.available()) {
+            Serial.print((char) modem.read());
             Serial.println();
           }
           delay(3000);
@@ -267,7 +270,7 @@ int sendModemMessage(uint16_t recipient, uint16_t size, byte* bytes, bool expect
 
     waitForModemBytes(2, "Waiting for message received confirmation");
     uint16_t count_confirmation;
-    Serial1.readBytes((byte*) &count_confirmation, 2);
+    modem.readBytes((byte*) &count_confirmation, 2);
     if (count_confirmation != size) {
       digitalWrite(LEDR, LOW);
       while(true) {
@@ -290,9 +293,8 @@ int sendModemMessage(uint16_t recipient, uint16_t size, byte* bytes, bool expect
 }
 
 
-std::map<uint16_t, Metric> getNodeMetrics() {
+std::map<uint16_t, Metric> getNodeMetrics(std::vector<Node> nodes) {
   std::map<uint16_t, Metric> res;
-  std::vector<Node> nodes = getRoutingTable();
   lock_modem = true;
   for (uint i = 0; i < nodes.size(); i++) {
     byte data[1] = {'n'};
@@ -365,11 +367,10 @@ void doFL(uint16_t target) {
   uint16_t best_node = 0;
   uint16_t max_epochs_since_last_fl = 0;
   uint16_t max_epochs = 0;
-
-  std::map<uint16_t, Metric> node_metrics = getNodeMetrics();
+  std::map<uint16_t, Metric> node_metrics = getNodeMetrics(nodes);
   for (auto const& [node_addr, metric] : node_metrics) {
       uint16_t amount_since_last_fl = metric.num_epochs - samples_amt[node_addr];
-      if (amount_since_last_fl >= max_epochs_since_last_fl) {
+      if ((target != 0 && node_addr == target) || (target == 0 && amount_since_last_fl >= max_epochs_since_last_fl)) {
         best_node = node_addr;
         max_epochs_since_last_fl = amount_since_last_fl;
         max_epochs = metric.num_epochs;
@@ -380,10 +381,6 @@ void doFL(uint16_t target) {
   if (max_epochs_since_last_fl == 0) {
     digitalWrite(LEDB, HIGH);
     return;
-  }
-
-  if (target != 0) {
-    best_node = target;
   }
 
   samples_amt[best_node] = max_epochs;
@@ -398,14 +395,14 @@ void doFL(uint16_t target) {
   float* output_weights = network->getOutputWeights();
   std::vector<float> weights;
 
-  int batches = floor((float)(network->getHiddenWeightsAmt() + network->getOutputWeightsAmt()) / (float)batchSize);
+  int batches = floor((float) (network->getHiddenWeightsAmt() + network->getOutputWeightsAmt()) / (float) WEIGHTS_BATCH_SIZE);
   Serial.println(batches);
 
   for (uint16_t batchNum = 0; batchNum < batches; batchNum++) {
     Serial.println("Requesting weights batch " + String(batchNum + 1) + "/" + String(batches) + " from " + best_node);
     std::vector<float> weights = requestWeights(best_node, batchNum);
     for(uint i = 0; i < weights.size(); i++) {
-      uint weightPos = (batchNum * batchSize) + i;
+      uint weightPos = (batchNum * WEIGHTS_BATCH_SIZE) + i;
       if (weightPos < network->getHiddenWeightsAmt()) {
         hidden_weights[weightPos] = hidden_weights[weightPos] * localWeightFactor + weights[i] * externalWeightFactor;
       } else {
@@ -417,7 +414,7 @@ void doFL(uint16_t target) {
   
   num_epochs += max_epochs_since_last_fl;
 
-  delay(1000);
+  delay(100);
   digitalWrite(LEDB, HIGH);
   Serial.println("FL_DONE");
 }
@@ -486,6 +483,22 @@ float readSerialFloat() {
   return val;
 }
 
+void modemMessageAvailable() {
+  if (debugEnabled) Serial.println("Modem message is available!");
+  byte* bytes;
+  uint16_t recipient;
+  int bytesCount = getModemMessage(bytes, recipient);
+
+  if (debugEnabled) Serial.println("Received " + String(bytesCount) + " bytes from modem");
+  if (bytesCount == 3 && (char) bytes[0] == 'g') {
+    uint16_t batchNum;
+    std::memcpy(&batchNum, &bytes[1], sizeof(int16_t));
+    sendWeights(recipient, batchNum);
+  } else if (bytesCount == 1 && (char) bytes[0] == 'n') { // Amount of new samples request
+    sendMetrics(recipient);
+  }
+}
+
 void loop() {
   if (Serial.available()) {
     int read = Serial.read();
@@ -495,21 +508,21 @@ void loop() {
       doFL(target);
     } else if (read == 't') {   // Train with a sample
       trainWithSerialSample();
-    } else if (read == 'r') {
+    } else if (read == 'r') {   // Get routing table
       Serial.println("Requesting routing table");
       std::vector<Node> nodes = getRoutingTable();
       Serial.println("Nodes: " + String(nodes.size()));
       for(uint i = 0; i < nodes.size(); i++) {
         Serial.println(nodes[i].address);
       }
-    } else if (read == 'z') {
+    } else if (read == 'z') {   // Get weights
       float* hidden_weights = network->getHiddenWeights();
       float* output_weights = network->getOutputWeights();
       for (uint i = 0; i < network->getHiddenWeightsAmt(); i++) {Serial.write(hidden_weights[i]);}
       for (uint i = 0; i < network->getOutputWeightsAmt(); i++) {Serial.write(output_weights[i]);}
-    } else if (read == 'x') {
+    } else if (read == 'x') {   // Get epochs
       Serial.println(num_epochs);
-    } else if (read == 'i') {
+    } else if (read == 'i') {   // Initialize device
       Serial.println("Initializing device");
 
       network->initialize(0.6, 0.9);
@@ -524,21 +537,15 @@ void loop() {
       }
       Serial.println("Model received");
     }
+    
+    // Modem message available
+    if (useSerialModemPassthrough && read == 'm') {
+      Serial.println("Reading modem message");
+      modemMessageAvailable();
+    }
   }
   
-  if (!lock_modem && Serial1.available()) { // Mesagge from LoRaMesher
-    if (debugEnabled) Serial.println("Modem message is available!");
-    byte* bytes;
-    uint16_t recipient;
-    int bytesCount = getModemMessage(bytes, recipient);
-
-    if (debugEnabled) Serial.println("Received " + String(bytesCount) + " bytes from modem");
-    if (bytesCount == 3 && (char) bytes[0] == 'g') {
-      uint16_t batchNum;
-      std::memcpy(&batchNum, &bytes[1], sizeof(int16_t));
-      sendWeights(recipient, batchNum);
-    } else if (bytesCount == 1 && (char) bytes[0] == 'n') { // Amount of new samples request
-      sendMetrics(recipient);
-    }
+  if (!useSerialModemPassthrough && !lock_modem && modem.available()) { // Mesagge from LoRaMesher
+    modemMessageAvailable();
   }
 }
