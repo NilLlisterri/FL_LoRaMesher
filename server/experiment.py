@@ -13,14 +13,14 @@ random.seed(123)
 def main():
     devices = [
         serial.Serial("com5", SERIAL_BR, timeout=5),
-        #serial.Serial("com7", SERIAL_BR, timeout=5),
+        serial.Serial("com7", SERIAL_BR, timeout=5),
         serial.Serial("com11", SERIAL_BR, timeout=5)
     ]
 
     device_address_map = {
-        "com5": 57156,# 22240,
-        # "com7": 2120, # 2120,
-        "com11": 56640, # 22652,
+        "com5": 1, #57156,# 22240,
+        "com7": 2, #2120, # 2120,
+        "com11": 3, #56640, # 22652,
     }
 
     nodeManager = NodeManager(seed, devices, device_address_map)

@@ -298,7 +298,9 @@ class NodeManager:
         nodes_count = device.readline().decode()
         
         # The device will ask all the other devices for metrics
-        if self.useSerialModemPassthrough: self.relayModemMessage(device, True)
+        if self.useSerialModemPassthrough: 
+            for i in range(len(self.devices) - 1):
+                self.relayModemMessage(device, True)
         
         if self.debug: print(f"[{device.port}] Routing nodes count: {nodes_count}")
         if (nodes_count == "0\r\n"):
@@ -366,6 +368,7 @@ class NodeManager:
                 if self.debug and i % 10 == 0: print("Waiting for response from receiver device...")
                 time.sleep(0.01)
                 i = i + 1
+            if self.debug: print(f"[SERVER] Reading and sending response from {targetDevice.port} to {device.port}")
             self.readAndSendMessage(targetDevice, True)
 
     def readAndSendMessage(self, device: serial.Serial, expectingMessage: bool = False) -> serial.Serial:
@@ -390,7 +393,7 @@ class NodeManager:
         targetDevicePort = [port for port, address in self.device_address_map.items() if address == targetAddress][0]
         targetDevice = [device for device in self.devices if device.port == targetDevicePort][0]
 
-        if self.debug: print(f"[{targetDevice.port}] Sending message to target: {targetDevice.port}")
+        if self.debug: print(f"[{device.port}] Sending message to target: {targetDevice.port}")
 
         if not expectingMessage: 
             targetDevice.write(b'm')
@@ -407,7 +410,7 @@ class NodeManager:
         for i in range(messageSize):
             targetDevice.write(message[i])
         
-        if self.debug: print(f"[{targetDevice.port}] Message sent!")
+        if self.debug: print(f"[{device.port}] Message sent to {targetDevice.port}!")
         
         return targetDevice
 
