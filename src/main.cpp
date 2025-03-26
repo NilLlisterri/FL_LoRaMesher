@@ -220,6 +220,7 @@ int getModemMessage(byte*& bytesPtr, uint16_t &sender) {
         waitForModemBytes(1, "Waiting for byte " + String(i+1));
         bytesPtr[i] = modem.read();
       }
+      modem.write((uint8_t*) &bytesCount, 2);
       if (debugEnabled) Serial.println("Modem received " + String(bytesCount) + " bytes");
       return bytesCount;
     }
@@ -302,6 +303,7 @@ std::map<uint16_t, Metric> getNodeMetrics(std::vector<Node> nodes) {
     int responseLength = sendModemMessage(nodes[i].address, 1, data, true, response);
     uint16_t amount;
     std::memcpy(&amount, response, sizeof(uint16_t));
+    free(response);
     Metric metric;
     metric.num_epochs = amount;
     metric.hops = nodes[i].hops;
@@ -313,7 +315,6 @@ std::map<uint16_t, Metric> getNodeMetrics(std::vector<Node> nodes) {
 
 std::vector<float> requestWeights(uint16_t node, int batchNum) {
   lock_modem = true;
-  if (debugEnabled) Serial.println("Requesting batch " + String(batchNum));
 
   // Send a 'g' to the other devices so they start sending me their data
   byte data[3] = {'g', 0, 0};
@@ -321,15 +322,11 @@ std::vector<float> requestWeights(uint16_t node, int batchNum) {
   byte* response;
   int response_bytes = sendModemMessage(node, 3, data, true, response);
 
-  if (debugEnabled) Serial.println("Batch " + String(batchNum) + " received, responseLength: "+ String(response_bytes));
-
   float min_w, max_w;
   memcpy(&min_w, &response[0], sizeof(float));
   memcpy(&max_w, &response[sizeof(float)], sizeof(float));
   uint8_t scaled_weights_bits;
   memcpy(&scaled_weights_bits, &response[sizeof(float) * 2], sizeof(uint8_t));
-
-  if (debugEnabled) Serial.println("Received min weight: " + String(min_w) + " Received max weight: " + String(max_w));
 
   std::vector<float> weights;
   uint currentResponseBit = sizeof(float) * 2 * 8; // After 2 floats
@@ -345,7 +342,7 @@ std::vector<float> requestWeights(uint16_t node, int batchNum) {
     weights.push_back(deScaleWeight(min_w, max_w, weight, scaled_weights_bits));
     weight = 0;
   }
-
+  free(response);
   lock_modem = false;
   return weights;
 }
@@ -399,7 +396,6 @@ void doFL(uint16_t target) {
   Serial.println(batches);
 
   for (uint16_t batchNum = 0; batchNum < batches; batchNum++) {
-    Serial.println("Requesting weights batch " + String(batchNum + 1) + "/" + String(batches) + " from " + best_node);
     std::vector<float> weights = requestWeights(best_node, batchNum);
     for(uint i = 0; i < weights.size(); i++) {
       uint weightPos = (batchNum * WEIGHTS_BATCH_SIZE) + i;

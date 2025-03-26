@@ -33,7 +33,7 @@ class NodeManager:
         test_samples_split = 20         # Number of samples for training of each keyword
 
         # Experiment sizes
-        self.training_epochs = 160      # Amount of training epochs. Can't be more than kws * train_samples_split
+        self.training_epochs = 50#160      # Amount of training epochs. Can't be more than kws * train_samples_split
         self.testing_epochs = 0         # Amount of test samples of each keyword. Can't be more than kws * test_samples_split
 
         self.momentum = 0.9
@@ -321,12 +321,10 @@ class NodeManager:
         if self.debug: print(f"[{device.port}] Num batches: {numBatches}")
 
         if self.useSerialModemPassthrough: 
-            for i in trange(int(numBatches), desc="Transfering batch"):
-                batchRequestMessage = device.readline().decode()
-                if self.debug: print(f"[{device.port}] BatchRequestMessage: {batchRequestMessage}")
+            for i in trange(int(numBatches), desc=f"Transfering batch {i}"):
                 # The device will ask for the weight batches
-                self.relayModemMessage(device, True)
-            
+                self.relayModemMessage(device, True) 
+
             flDoneConfirmation = device.readline().decode()
             if self.debug: print(f"[{device.port}] FL done confirmation: {flDoneConfirmation}")
         else:
@@ -372,8 +370,8 @@ class NodeManager:
             self.readAndSendMessage(targetDevice, True)
 
     def readAndSendMessage(self, device: serial.Serial, expectingMessage: bool = False) -> serial.Serial:
+        # Message reading from sender
         if self.debug: print(f"[{device.port}] Reading message...")
-
         send_message_command = device.read()
         if self.debug: print(f"[{device.port}] Send message command: {send_message_command}")
         targetAddress = struct.unpack('H', device.read(2))[0]
@@ -385,31 +383,25 @@ class NodeManager:
             byte = device.read(1)
             message.append(byte)
             device.write(byte) # echo the same value (error detection)
+        
         device.write(struct.pack('H', messageSize)) # Confirm size
 
-        
-
-        # Message sending
+        # Message sending to recipient
         targetDevicePort = [port for port, address in self.device_address_map.items() if address == targetAddress][0]
         targetDevice = [device for device in self.devices if device.port == targetDevicePort][0]
-
         if self.debug: print(f"[{device.port}] Sending message to target: {targetDevice.port}")
-
-        if not expectingMessage: 
+        if not expectingMessage: # If the sender is not expecting a response, notify it
             targetDevice.write(b'm')
             confirmation = targetDevice.readline().decode()
             if self.debug: print(f"[{targetDevice.port}] Reading modem message confirmation: {confirmation}")
-
         targetDevice.write(b'r') # Read command
-        # confirmation = targetDevice.read().decode()
-        # if self.debug: print(f"[{targetDevice.port}] Receive message confirmation: {confirmation}")
-
         targetDevice.write(struct.pack('H', self.device_address_map[device.port])) # Sender address
         targetDevice.write(struct.pack('H', messageSize)) # Message size
-        # Send the message
         for i in range(messageSize):
             targetDevice.write(message[i])
-        
+
+        readSizeConfirmation = struct.unpack('H', targetDevice.read(2))[0]
+        if self.debug: print(f"[{targetDevice.port}] Reading size confirmation: {readSizeConfirmation}")
         if self.debug: print(f"[{device.port}] Message sent to {targetDevice.port}!")
         
         return targetDevice
@@ -428,7 +420,7 @@ class NodeManager:
         train_ini_time = time.time()
         num_batches = int(self.training_epochs/self.batchSize)
 
-        # if self.enableTest: self.sendTestAllDevices() # Initial accuracy
+        if self.enableTest: self.sendTestAllDevices() # Initial accuracy
 
         # Train the device
         for batch in range(num_batches):
