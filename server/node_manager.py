@@ -33,15 +33,14 @@ class NodeManager:
         test_samples_split = 20         # Number of samples for training of each keyword
 
         # Experiment sizes
-        self.training_epochs = 50#160      # Amount of training epochs. Can't be more than kws * train_samples_split
-        self.testing_epochs = 0         # Amount of test samples of each keyword. Can't be more than kws * test_samples_split
+        self.training_epochs = 160   # Amount of training epochs. Can't be more than kws * train_samples_split
+        self.testing_epochs = 20        # Amount of test samples of each keyword. Can't be more than kws * test_samples_split
 
         self.momentum = 0.9
         self.learningRate= 0.05
 
-        self.enableTest = True
         self.enablePlot = False
-        self.batchSize = 4             # Must be divisble by the amount of keywords
+        self.batchSize = 4              # Must be divisble by the amount of keywords
 
         self.keywords_buttons = {
             "montserrat": 1,
@@ -50,14 +49,13 @@ class NodeManager:
             "blau": 4,
         }
 
-        self.experiment = 'iid'        # 'iid', 'no-iid', 'train-test', None
+        self.experiment = 'iid'         # 'iid', 'no-iid', 'train-test', None
         self.debug = False
         self.useSerialModemPassthrough = True
-        self.pauseListen = False       # So there are no threads reading the serial input at the same time
+        self.pauseListen = False        # So there are no threads reading the serial input at the same time
 
         self.graph = []
         self.fl_round_epochs = []
-
 
         # Load the dataset
         self.words = list(self.keywords_buttons.keys())
@@ -183,7 +181,7 @@ class NodeManager:
         successes_queue = Queue()
         
         if self.debug: print(f"[{device.port}] Sending test sample {self.testing_epochs}")
-        for filename, index in tqdm(self.test_keywords[:self.testing_epochs], desc=f"[{device.port}] Sending test samples", ncols=0 if self.debug else None):
+        for index, filename in enumerate(tqdm(self.test_keywords[:self.testing_epochs], desc=f"[{device.port}] Sending test samples", ncols=0 if self.debug else None)):
             if self.debug: print(f"[{device.port}] Sending test sample {index}")
             keyword = filename.split("/")[0]
             num_button = self.keywords_buttons[keyword]
@@ -283,11 +281,13 @@ class NodeManager:
             plt.plot(self.test_accuracies_map[device_index], colors[device_index] + markers[device_index], label=f"Device {device.port}", marker='o')
         plt.legend()
 
-    # Trigger a FL round on a device. A target device can be specified
-    def doFL(self, device: serial.Serial, target_device: serial.Serial = None):
+    # Trigger a FL round on a device. A target device can be specified, and the quantization bits too
+    def doFL(self, device: serial.Serial, target_device: serial.Serial = None, scaledWeightsBits: int = 0):
         print(f"[SERVER] Triggering FL round on device {device.port}")
         device.write(b'>')
         device.write(struct.pack('H', self.device_address_map[target_device.port] if target_device != None else 0))
+
+        device.write(struct.pack('B', scaledWeightsBits))
 
         fl_start_confirmation = device.readline().decode()
         if self.debug: print(f"[{device.port}] Fl start confirmation: {fl_start_confirmation}")
@@ -420,7 +420,7 @@ class NodeManager:
         train_ini_time = time.time()
         num_batches = int(self.training_epochs/self.batchSize)
 
-        if self.enableTest: self.sendTestAllDevices() # Initial accuracy
+        self.sendTestAllDevices() # Initial accuracy
 
         # Train the device
         for batch in range(num_batches):
@@ -438,10 +438,9 @@ class NodeManager:
             # time.sleep(1)
 
             if (batch == 0): sys.stdout.write("\033[K") # print("\r\n")
-            self.doFL(self.devices[0], self.devices[1])
+            self.doFL(self.devices[0], self.devices[1], 12)
 
-            if self.enableTest:
-                self.sendTestAllDevices() # To calculate the accuracy on every epoch
+            self.sendTestAllDevices() # To calculate the accuracy on every epoch
             
             # time.sleep(2)
 

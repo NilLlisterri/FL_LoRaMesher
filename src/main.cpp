@@ -313,19 +313,18 @@ std::map<uint16_t, Metric> getNodeMetrics(std::vector<Node> nodes) {
   return res;
 }
 
-std::vector<float> requestWeights(uint16_t node, int batchNum) {
+std::vector<float> requestWeights(uint16_t node, int batchNum, uint8_t scaled_weights_bits) {
   lock_modem = true;
 
   // Send a 'g' to the other devices so they start sending me their data
-  byte data[3] = {'g', 0, 0};
+  byte data[4] = {'g', 0, 0, scaled_weights_bits}; // command, batch num (2), scaled_weights_bits
   std::memcpy(&data[1], &batchNum, sizeof(uint16_t));
   byte* response;
-  int response_bytes = sendModemMessage(node, 3, data, true, response);
+  int response_bytes = sendModemMessage(node, sizeof(data), data, true, response);
 
   float min_w, max_w;
   memcpy(&min_w, &response[0], sizeof(float));
   memcpy(&max_w, &response[sizeof(float)], sizeof(float));
-  uint8_t scaled_weights_bits;
   memcpy(&scaled_weights_bits, &response[sizeof(float) * 2], sizeof(uint8_t));
 
   std::vector<float> weights;
@@ -350,9 +349,13 @@ std::vector<float> requestWeights(uint16_t node, int batchNum) {
 // Map containing the addres of the node and the samples it captured until the last FL
 std::map<uint16_t, uint16_t> samples_amt;
 
-void doFL(uint16_t target) {
+void doFL(uint16_t target, uint8_t scaled_weights_bits) {
   digitalWrite(LEDB, LOW);
   Serial.println("Starting FL");
+
+  if (scaled_weights_bits == 0) {
+    scaled_weights_bits = 12;
+  }
 
   std::vector<Node> nodes = getRoutingTable();
   Serial.println(nodes.size());
@@ -396,7 +399,7 @@ void doFL(uint16_t target) {
   Serial.println(batches);
 
   for (uint16_t batchNum = 0; batchNum < batches; batchNum++) {
-    std::vector<float> weights = requestWeights(best_node, batchNum);
+    std::vector<float> weights = requestWeights(best_node, batchNum, scaled_weights_bits);
     for(uint i = 0; i < weights.size(); i++) {
       uint weightPos = (batchNum * WEIGHTS_BATCH_SIZE) + i;
       if (weightPos < network->getHiddenWeightsAmt()) {
@@ -416,10 +419,10 @@ void doFL(uint16_t target) {
 }
 
 
-void sendWeights(uint16_t recipient, uint16_t batchNum) {
+void sendWeights(uint16_t recipient, uint16_t batchNum, uint8_t scaled_weights_bits) {
   if (debugEnabled) Serial.println("Received weights request for batch " + String(batchNum) + " from " + String(recipient));
   float min_w, max_w;
-  uint8_t scaled_weights_bits = 12;
+  // uint8_t scaled_weights_bits = 12;
   std::vector<scaledType> weights = getScaledWeights(batchNum, min_w, max_w, scaled_weights_bits);
   if (debugEnabled) Serial.println("Received " + String(weights.size()) + " weights from getScaledWeights, batch size is: " + String(weights.size()));
 
@@ -486,10 +489,12 @@ void modemMessageAvailable() {
   int bytesCount = getModemMessage(bytes, recipient);
 
   if (debugEnabled) Serial.println("Received " + String(bytesCount) + " bytes from modem");
-  if (bytesCount == 3 && (char) bytes[0] == 'g') {
+  if (bytesCount == 4 && (char) bytes[0] == 'g') {
     uint16_t batchNum;
     std::memcpy(&batchNum, &bytes[1], sizeof(int16_t));
-    sendWeights(recipient, batchNum);
+    uint8_t scaled_weights_bits;
+    std::memcpy(&scaled_weights_bits, &bytes[3], sizeof(int8_t));
+    sendWeights(recipient, batchNum, scaled_weights_bits);
   } else if (bytesCount == 1 && (char) bytes[0] == 'n') { // Amount of new samples request
     sendMetrics(recipient);
   }
@@ -501,7 +506,11 @@ void loop() {
     if (read == '>') {          // s -> FEDERATED LEARNING
       uint16_t target;
       Serial.readBytes((byte*) &target, 2);
-      doFL(target);
+
+      uint8_t scaled_weights_bits;
+      Serial.readBytes((byte*) &scaled_weights_bits, 1);
+
+      doFL(target, scaled_weights_bits);
     } else if (read == 't') {   // Train with a sample
       trainWithSerialSample();
     } else if (read == 'r') {   // Get routing table
