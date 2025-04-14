@@ -65,13 +65,12 @@ std::vector<float> getRawWeights(uint16_t batchNum, float &min_w, float &max_w) 
   float* output_weights = network->getOutputWeights();
 
   uint start = batchNum * WEIGHTS_BATCH_SIZE;
-  for(uint i = start; i < start + WEIGHTS_BATCH_SIZE; i++) {
+  for(uint i = start; i < min(start + WEIGHTS_BATCH_SIZE, network->getHiddenWeightsAmt() + network->getOutputWeightsAmt()); i++) {
     float weight;
-    if (i > network->getHiddenWeightsAmt() + network->getOutputWeightsAmt()) break;
     if (i < network->getHiddenWeightsAmt()) {
       weight = hidden_weights[i];
     } else {
-      weight = output_weights[i-network->getHiddenWeightsAmt()];
+      weight = output_weights[i - network->getHiddenWeightsAmt()];
     }
     weights.push_back(weight);
 
@@ -337,7 +336,6 @@ std::vector<float> requestWeights(uint16_t node, int batchNum, uint8_t scaled_we
       weight |= bitValue;
       currentResponseBit++;
     }
-    if (debugEnabled && byte == 0) Serial.println("Received first weight: " + String(weight));
     weights.push_back(deScaleWeight(min_w, max_w, weight, scaled_weights_bits));
     weight = 0;
   }
@@ -403,10 +401,10 @@ void doFL(uint16_t target, uint8_t scaled_weights_bits) {
     for(uint i = 0; i < weights.size(); i++) {
       uint weightPos = (batchNum * WEIGHTS_BATCH_SIZE) + i;
       if (weightPos < network->getHiddenWeightsAmt()) {
-        hidden_weights[weightPos] = hidden_weights[weightPos] * localWeightFactor + weights[i] * externalWeightFactor;
+        hidden_weights[weightPos] = (hidden_weights[weightPos] * localWeightFactor) + (weights[i] * externalWeightFactor);
       } else {
         weightPos = weightPos - network->getHiddenWeightsAmt();
-        output_weights[weightPos] = output_weights[weightPos] * localWeightFactor + weights[i] * externalWeightFactor;
+        output_weights[weightPos] = (output_weights[weightPos] * localWeightFactor) + (weights[i] * externalWeightFactor);
       }
     }
   }
@@ -440,7 +438,6 @@ void sendWeights(uint16_t recipient, uint16_t batchNum, uint8_t scaled_weights_b
 
   uint currentBit = sizeof(float) * 2 * 8;
   for(uint i = 0; i < weights.size(); i++) {
-    if (i == 0 && debugEnabled) Serial.println("First weight: " + String(weights[i]));
     for (uint j = 0; j < scaled_weights_bits; j++) {
       uint shiftBits = scaled_weights_bits - j - 1;
       uint bitValue = (weights[i] >> shiftBits) & 1;
