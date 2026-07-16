@@ -6,7 +6,7 @@ Federated Learning via LoRaMesher with a two-board application/modem design.
 
 This repository contains the code for the Arduino Portenta H7 application microcontroller and the Python server that orchestrates the experiments. The nodes train a keyword spotting (KWS) neural network on-device and share their model weights through Federated Learning rounds.
 
-The code for the modem microcontroller (TTGO T-Beam running LoRaMesher) can be found [here](https://github.com/NilLlisterri/TTGO-LoRaMesher/tree/master).
+The code for the modem microcontroller (TTGO LoRa32 or TTGO T-Beam, both running LoRaMesher) can be found [here](https://github.com/NilLlisterri/TTGO-LoRaMesher/tree/master).
 
 ## Overview
 
